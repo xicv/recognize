@@ -143,6 +143,12 @@ help:
 	@echo "  make run-vad      - Run VAD mode (MODEL=base.en by default)"
 	@echo "  make list-models  - Show available models"
 	@echo ""
+	@echo "$(YELLOW)Installation:$(NC)"
+	@echo "  make install      - Install system-wide (/usr/local/bin)"
+	@echo "  make install-user - Install for current user (~/bin)"
+	@echo "  make uninstall    - Remove system installation"
+	@echo "  make package      - Create distribution package"
+	@echo ""
 	@echo "$(YELLOW)Development:$(NC)"
 	@echo "  make test         - Test basic functionality"
 	@echo "  make help         - Show this help"
@@ -163,6 +169,64 @@ info:
 	@echo "Memory: $$(echo $$(($$(sysctl -n hw.memsize) / 1024 / 1024 / 1024))) GB"
 	@command -v cmake >/dev/null 2>&1 && echo "CMake: $$(cmake --version | head -1)" || echo "CMake: Not installed"
 	@pkg-config --exists sdl2 && echo "SDL2: $$(pkg-config --modversion sdl2)" || echo "SDL2: Not installed"
+
+# Installation
+PREFIX ?= /usr/local
+INSTALL_DIR = $(PREFIX)/bin
+MODELS_DIR = ~/.whisper-stream-coreml/models
+
+.PHONY: install
+install: build
+	@echo "$(BLUE)Installing $(TARGET) system-wide...$(NC)"
+	@sudo mkdir -p $(INSTALL_DIR)
+	@sudo cp $(TARGET) $(INSTALL_DIR)/
+	@sudo chmod +x $(INSTALL_DIR)/$(TARGET)
+	@mkdir -p $(MODELS_DIR)
+	@echo "$(GREEN)✓ Installed to $(INSTALL_DIR)/$(TARGET)$(NC)"
+	@echo "$(GREEN)✓ Models directory: $(MODELS_DIR)$(NC)"
+	@echo "$(YELLOW)Run: whisper-stream-coreml -h$(NC)"
+
+.PHONY: uninstall
+uninstall:
+	@echo "$(BLUE)Uninstalling $(TARGET)...$(NC)"
+	@sudo rm -f $(INSTALL_DIR)/$(TARGET)
+	@echo "$(GREEN)✓ Uninstalled from $(INSTALL_DIR)/$(TARGET)$(NC)"
+	@echo "$(YELLOW)Models directory preserved: $(MODELS_DIR)$(NC)"
+
+.PHONY: install-user
+install-user: build
+	@echo "$(BLUE)Installing $(TARGET) for current user...$(NC)"
+	@mkdir -p ~/bin
+	@cp $(TARGET) ~/bin/
+	@chmod +x ~/bin/$(TARGET)
+	@mkdir -p $(MODELS_DIR)
+	@echo "$(GREEN)✓ Installed to ~/bin/$(TARGET)$(NC)"
+	@echo "$(GREEN)✓ Models directory: $(MODELS_DIR)$(NC)"
+	@if echo $$PATH | grep -q "$$HOME/bin"; then \
+		echo "$(GREEN)✓ ~/bin is in your PATH$(NC)"; \
+	else \
+		echo "$(YELLOW)⚠️  Add ~/bin to your PATH:$(NC)"; \
+		echo "$(YELLOW)   echo 'export PATH=\"\$$HOME/bin:\$$PATH\"' >> ~/.zshrc$(NC)"; \
+		echo "$(YELLOW)   source ~/.zshrc$(NC)"; \
+	fi
+
+.PHONY: package
+package: build
+	@echo "$(BLUE)Creating distribution package...$(NC)"
+	@rm -rf dist
+	@mkdir -p dist/whisper-stream-coreml
+	@cp $(TARGET) dist/whisper-stream-coreml/
+	@cp README.md TUTORIAL.md dist/whisper-stream-coreml/
+	@printf '#!/bin/bash\nset -e\necho "Installing whisper-stream-coreml..."\nsudo mkdir -p /usr/local/bin\nsudo cp whisper-stream-coreml /usr/local/bin/\nsudo chmod +x /usr/local/bin/whisper-stream-coreml\nmkdir -p ~/.whisper-stream-coreml/models\necho "✓ Installation complete!"\necho "✓ Run: whisper-stream-coreml -h"\n' > dist/whisper-stream-coreml/install.sh
+	@printf '#!/bin/bash\necho "Uninstalling whisper-stream-coreml..."\nsudo rm -f /usr/local/bin/whisper-stream-coreml\necho "✓ Uninstalled (models preserved in ~/.whisper-stream-coreml/)"\n' > dist/whisper-stream-coreml/uninstall.sh
+	@chmod +x dist/whisper-stream-coreml/install.sh
+	@chmod +x dist/whisper-stream-coreml/uninstall.sh
+	@cd dist && tar czf whisper-stream-coreml.tar.gz whisper-stream-coreml/
+	@echo "$(GREEN)✓ Package created: dist/whisper-stream-coreml.tar.gz$(NC)"
+	@echo "$(YELLOW)To distribute:$(NC)"
+	@echo "  tar xzf whisper-stream-coreml.tar.gz"
+	@echo "  cd whisper-stream-coreml"
+	@echo "  ./install.sh"
 
 # Development shortcuts
 .PHONY: dev

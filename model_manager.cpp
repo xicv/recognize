@@ -13,7 +13,13 @@
 #endif
 
 ModelManager::ModelManager() {
-    models_dir_ = "models";
+    // Use global models directory if installed system-wide
+    const char* home = getenv("HOME");
+    if (home && std::filesystem::exists("/usr/local/bin/whisper-stream-coreml")) {
+        models_dir_ = std::string(home) + "/.whisper-stream-coreml/models";
+    } else {
+        models_dir_ = "models";
+    }
     init_model_registry();
     ensure_models_directory();
 }
