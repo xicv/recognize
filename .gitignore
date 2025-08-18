@@ -1,0 +1,90 @@
+# Build directories
+build/
+bin/
+
+# Executables
+whisper-stream-coreml
+*.exe
+*.out
+*.app
+
+# Models directory (contains large binary files)
+models/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Audio recordings
+*.wav
+*.mp3
+*.m4a
+
+# Output files
+transcript*.txt
+*.log
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
