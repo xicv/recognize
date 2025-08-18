@@ -5,6 +5,7 @@
 #include "common.h"
 #include "common-whisper.h"
 #include "whisper.h"
+#include "model_manager.h"
 
 #include <chrono>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <iostream>
 
 // Command-line parameters with CoreML specific options
 struct whisper_params {
@@ -39,9 +41,10 @@ struct whisper_params {
     bool flash_attn    = false;
 
     std::string language  = "en";
-    std::string model     = "models/ggml-base.en.bin";
+    std::string model     = ""; // Will be auto-resolved by ModelManager
     std::string coreml_model = ""; // Optional CoreML model path
     std::string fname_out;
+    bool list_models = false; // Flag to list available models
 };
 
 void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
@@ -79,6 +82,8 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-coreml" || arg == "--coreml")      { params.use_coreml    = true; }
         else if (arg == "-ncoreml" || arg == "--no-coreml")  { params.use_coreml    = false; }
         else if (arg == "-cm"   || arg == "--coreml-model")  { params.coreml_model  = argv[++i]; }
+        // Model management options
+        else if (arg == "--list-models")                     { params.list_models   = true; }
 
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
@@ -122,6 +127,15 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -ncoreml, --no-coreml     [%-7s] disable CoreML acceleration\n",                    params.use_coreml ? "false" : "true");
     fprintf(stderr, "  -cm FNAME,--coreml-model FNAME [%-7s] CoreML model path\n",                        params.coreml_model.c_str());
     fprintf(stderr, "\n");
+    fprintf(stderr, "model management:\n");
+    fprintf(stderr, "            --list-models   list available models for download\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "examples:\n");
+    fprintf(stderr, "  %s                                    # interactive model selection\n", argv[0]);
+    fprintf(stderr, "  %s -m base.en                        # download and use base.en model\n", argv[0]);
+    fprintf(stderr, "  %s -m tiny.en --step 0 --length 30000 # VAD mode with tiny model\n", argv[0]);
+    fprintf(stderr, "  %s --list-models                      # show available models\n", argv[0]);
+    fprintf(stderr, "\n");
 }
 
 int main(int argc, char ** argv) {
@@ -132,6 +146,25 @@ int main(int argc, char ** argv) {
     if (whisper_params_parse(argc, argv, params) == false) {
         return 1;
     }
+
+    // Initialize model manager
+    ModelManager model_manager;
+
+    // Handle special commands
+    if (params.list_models) {
+        model_manager.list_available_models();
+        return 0;
+    }
+
+    // Resolve model (with auto-download if needed)
+    std::string resolved_model = model_manager.resolve_model(params.model, params.use_coreml);
+    if (resolved_model.empty()) {
+        std::cout << "\n❌ No model available. Exiting.\n";
+        return 1;
+    }
+    
+    // Update params with resolved model path
+    params.model = resolved_model;
 
     params.keep_ms   = std::min(params.keep_ms,   params.step_ms);
     params.length_ms = std::max(params.length_ms, params.step_ms);

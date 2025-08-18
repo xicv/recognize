@@ -16,7 +16,7 @@ A macOS CLI for real-time speech recognition with CoreML acceleration, based on 
 - macOS 10.15 or later
 - SDL2 library (`brew install sdl2`)
 - CMake (`brew install cmake`)
-- Whisper model file (download from https://huggingface.co/ggerganov/whisper.cpp)
+- Models are downloaded automatically when needed
 
 ## Building
 
@@ -32,38 +32,47 @@ This will:
 
 ## Usage
 
-### Basic Usage
+### Quick Start (Interactive)
 ```bash
-./whisper-stream-coreml -m path/to/ggml-base.en.bin
+./whisper-stream-coreml
+# The CLI will guide you through model selection and download
 ```
 
-### With CoreML (default)
+### Direct Model Usage
 ```bash
-./whisper-stream-coreml -m path/to/model.bin --coreml
+./whisper-stream-coreml -m base.en
+# Downloads base.en model automatically if not present
 ```
 
-### Without CoreML
+### List Available Models
 ```bash
-./whisper-stream-coreml -m path/to/model.bin --no-coreml
+./whisper-stream-coreml --list-models
 ```
 
 ### VAD Mode (recommended)
 ```bash
-./whisper-stream-coreml -m path/to/model.bin --step 0 --length 30000 -vth 0.6
+./whisper-stream-coreml -m base.en --step 0 --length 30000 -vth 0.6
 ```
 
 ### Continuous Mode
 ```bash
-./whisper-stream-coreml -m path/to/model.bin --step 500 --length 5000
+./whisper-stream-coreml -m base.en --step 500 --length 5000
+```
+
+### With/Without CoreML
+```bash
+./whisper-stream-coreml -m base.en --coreml     # Enable CoreML (default)
+./whisper-stream-coreml -m base.en --no-coreml  # Disable CoreML
 ```
 
 ## Command Line Options
 
 ### Basic Options
 - `-h, --help` - Show help message
-- `-m, --model` - Path to whisper model file (required)
+- `-m, --model` - Model name (e.g., base.en, tiny.en) or file path
 - `-l, --language` - Source language (default: en)
 - `-t, --threads` - Number of threads (default: 4)
+- `--list-models` - List all available models for download
 
 ### Audio Options
 - `-c, --capture` - Audio capture device ID (default: -1 for default)
@@ -101,37 +110,58 @@ This will:
 
 ## Examples
 
+### Interactive Setup (Recommended for First Use)
+```bash
+./whisper-stream-coreml
+# 1. Shows available models
+# 2. Prompts for model selection
+# 3. Downloads automatically with progress
+# 4. Shows usage examples
+```
+
 ### Real-time transcription with VAD
 ```bash
-./whisper-stream-coreml -m models/ggml-base.en.bin --step 0 --length 30000
+./whisper-stream-coreml -m base.en --step 0 --length 30000
 ```
 
 ### Continuous transcription every 500ms
 ```bash
-./whisper-stream-coreml -m models/ggml-base.en.bin --step 500 --length 5000
+./whisper-stream-coreml -m base.en --step 500 --length 5000
 ```
 
 ### Save transcription to file
 ```bash
-./whisper-stream-coreml -m models/ggml-base.en.bin -f transcript.txt
+./whisper-stream-coreml -m base.en -f transcript.txt
 ```
 
 ### Different language with translation
 ```bash
-./whisper-stream-coreml -m models/ggml-base.bin -l es --translate
+./whisper-stream-coreml -m base -l es --translate
 ```
 
-## Models
-
-Download pre-trained models:
+### Fast processing with tiny model
 ```bash
-# English-only models (faster)
-curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o models/ggml-base.en.bin
-curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin -o models/ggml-small.en.bin
+./whisper-stream-coreml -m tiny.en --step 500
+```
 
-# Multilingual models
-curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin -o models/ggml-base.bin
-curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin -o models/ggml-small.bin
+## Available Models
+
+The CLI automatically downloads models when needed. Available models:
+
+### English-only (Recommended for English speech)
+- `tiny.en` (39 MB) - Fastest processing, lower accuracy
+- `base.en` (148 MB) - Good balance of speed and accuracy
+- `small.en` (488 MB) - Higher accuracy than base
+- `medium.en` (1.5 GB) - Very high accuracy, slower
+
+### Multilingual (99 languages)
+- `tiny` (39 MB) - Fastest, 99 languages, lower accuracy
+- `base` (148 MB) - Good balance, 99 languages
+- `small` (488 MB) - Higher accuracy, 99 languages
+
+View all available models:
+```bash
+./whisper-stream-coreml --list-models
 ```
 
 ## Troubleshooting
