@@ -153,11 +153,14 @@ The CLI automatically downloads models when needed. Available models:
 - `base.en` (148 MB) - Good balance of speed and accuracy
 - `small.en` (488 MB) - Higher accuracy than base
 - `medium.en` (1.5 GB) - Very high accuracy, slower
+- `large` (3.1 GB) - Highest accuracy, slowest
 
 ### Multilingual (99 languages)
 - `tiny` (39 MB) - Fastest, 99 languages, lower accuracy
 - `base` (148 MB) - Good balance, 99 languages
 - `small` (488 MB) - Higher accuracy, 99 languages
+- `medium` (1.5 GB) - Very high accuracy, 99 languages
+- `large-v3` (3.1 GB) - Highest accuracy, 99 languages
 
 View all available models:
 ```bash

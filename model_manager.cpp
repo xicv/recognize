@@ -64,6 +64,17 @@ void ModelManager::init_model_registry() {
         false
     };
     
+    models_["large"] = {
+        "large",
+        "Large English model (3.1 GB) - Highest accuracy, slowest",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-encoder.mlmodelc.zip",
+        "ggml-large-v3.bin",
+        "ggml-large-v3-encoder.mlmodelc",
+        3100,
+        false
+    };
+    
     // Multilingual models
     models_["tiny"] = {
         "tiny",
@@ -95,6 +106,28 @@ void ModelManager::init_model_registry() {
         "ggml-small.bin",
         "ggml-small-encoder.mlmodelc",
         488,
+        true
+    };
+    
+    models_["medium"] = {
+        "medium",
+        "Medium multilingual model (1.5 GB) - 99 languages, very high accuracy",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-encoder.mlmodelc.zip",
+        "ggml-medium.bin",
+        "ggml-medium-encoder.mlmodelc",
+        1540,
+        true
+    };
+    
+    models_["large-v3"] = {
+        "large-v3",
+        "Large multilingual model (3.1 GB) - 99 languages, highest accuracy",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-encoder.mlmodelc.zip",
+        "ggml-large-v3.bin",
+        "ggml-large-v3-encoder.mlmodelc",
+        3100,
         true
     };
 }
