@@ -20,33 +20,49 @@ A macOS CLI for real-time speech recognition with CoreML acceleration, based on 
 
 ## Building
 
+### Quick Start (Recommended)
 ```bash
-./build.sh
+make install-deps && make build
 ```
 
-This will:
-1. Check for required dependencies
-2. Configure with CMake including CoreML and Metal support
-3. Build the executable
-4. Copy to the current directory
+### Alternative Methods
+```bash
+# Using build script
+./build.sh
+
+# Manual build
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DWHISPER_COREML=ON -DGGML_USE_METAL=ON
+make -j$(nproc)
+```
+
+### Available Make Targets
+```bash
+make help          # Show all available commands
+make build         # Build the project
+make clean         # Clean build artifacts
+make test          # Test functionality
+make run           # Interactive model selection
+make list-models   # Show available models
+```
 
 ## Usage
 
 ### Quick Start (Interactive)
 ```bash
-./whisper-stream-coreml
+make run
 # The CLI will guide you through model selection and download
 ```
 
 ### Direct Model Usage
 ```bash
-./whisper-stream-coreml -m base.en
+make run-model MODEL=base.en
 # Downloads base.en model automatically if not present
 ```
 
 ### List Available Models
 ```bash
-./whisper-stream-coreml --list-models
+make list-models
 ```
 
 ### VAD Mode (recommended)
@@ -164,8 +180,14 @@ The CLI automatically downloads models when needed. Available models:
 
 View all available models:
 ```bash
-./whisper-stream-coreml --list-models
+make list-models
 ```
+
+## Documentation
+
+- **[TUTORIAL.md](TUTORIAL.md)** - Comprehensive usage guide with examples
+- **[README.md](README.md)** - This file (quick reference)
+- Run `make help` - Show all Makefile commands
 
 ## Troubleshooting
 
