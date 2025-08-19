@@ -116,6 +116,11 @@ struct whisper_params {
     std::string coreml_model = "";
     std::string fname_out;
     bool list_models = false;
+    
+    // Auto-copy settings
+    bool auto_copy_enabled = false;
+    int32_t auto_copy_max_duration_hours = 2; // Default: 2 hours
+    int32_t auto_copy_max_size_bytes = 1024 * 1024; // Default: 1MB
 };
 
 ConfigManager::ConfigManager() {
@@ -176,6 +181,11 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.print_colors) params.print_colors = *effective.print_colors;
     if (effective.save_audio) params.save_audio = *effective.save_audio;
     if (effective.output_file) params.fname_out = *effective.output_file;
+    
+    // Auto-copy settings
+    if (effective.auto_copy_enabled) params.auto_copy_enabled = *effective.auto_copy_enabled;
+    if (effective.auto_copy_max_duration_hours) params.auto_copy_max_duration_hours = *effective.auto_copy_max_duration_hours;
+    if (effective.auto_copy_max_size_bytes) params.auto_copy_max_size_bytes = *effective.auto_copy_max_size_bytes;
 }
 
 std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
@@ -217,7 +227,15 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"output", "output_file"},
         {"output_file", "output_file"},
         {"format", "output_format"},
-        {"output_format", "output_format"}
+        {"output_format", "output_format"},
+        
+        // Auto-copy configuration keys
+        {"auto_copy", "auto_copy_enabled"},
+        {"auto_copy_enabled", "auto_copy_enabled"},
+        {"auto_copy_max_duration", "auto_copy_max_duration_hours"},
+        {"auto_copy_max_duration_hours", "auto_copy_max_duration_hours"},
+        {"auto_copy_max_size", "auto_copy_max_size_bytes"},
+        {"auto_copy_max_size_bytes", "auto_copy_max_size_bytes"}
     };
 }
 
@@ -363,6 +381,11 @@ void ConfigManager::load_env_vars() {
     env_config_.save_audio = get_env_bool("WHISPER_SAVE_AUDIO");
     env_config_.output_file = get_env_var("WHISPER_OUTPUT_FILE");
     env_config_.output_format = get_env_var("WHISPER_OUTPUT_FORMAT");
+    
+    // Auto-copy environment variables
+    env_config_.auto_copy_enabled = get_env_bool("WHISPER_AUTO_COPY");
+    env_config_.auto_copy_max_duration_hours = get_env_int("WHISPER_AUTO_COPY_MAX_DURATION");
+    env_config_.auto_copy_max_size_bytes = get_env_int("WHISPER_AUTO_COPY_MAX_SIZE");
 }
 
 bool ConfigManager::validate_config() const {
@@ -501,6 +524,11 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.output_file) add_field("output_file", *config.output_file);
     if (config.output_format) add_field("output_format", *config.output_format);
     
+    // Auto-copy settings
+    if (config.auto_copy_enabled) add_bool("auto_copy_enabled", *config.auto_copy_enabled);
+    if (config.auto_copy_max_duration_hours) add_int("auto_copy_max_duration_hours", *config.auto_copy_max_duration_hours);
+    if (config.auto_copy_max_size_bytes) add_int("auto_copy_max_size_bytes", *config.auto_copy_max_size_bytes);
+    
     json << "\n}\n";
     return json.str();
 }
@@ -561,6 +589,11 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.save_audio = get_bool("save_audio");
     config.output_file = get_string("output_file");
     config.output_format = get_string("output_format");
+    
+    // Auto-copy settings
+    config.auto_copy_enabled = get_bool("auto_copy_enabled");
+    config.auto_copy_max_duration_hours = get_int("auto_copy_max_duration_hours");
+    config.auto_copy_max_size_bytes = get_int("auto_copy_max_size_bytes");
     
     return config;
 }
@@ -632,6 +665,9 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "save_audio") config.save_audio = std::nullopt;
         else if (key == "output_file") config.output_file = std::nullopt;
         else if (key == "output_format") config.output_format = std::nullopt;
+        else if (key == "auto_copy_enabled") config.auto_copy_enabled = std::nullopt;
+        else if (key == "auto_copy_max_duration_hours") config.auto_copy_max_duration_hours = std::nullopt;
+        else if (key == "auto_copy_max_size_bytes") config.auto_copy_max_size_bytes = std::nullopt;
         else return false;
         return true;
     }
@@ -694,6 +730,15 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         }
         else if (key == "output_file") config.output_file = value;
         else if (key == "output_format") config.output_format = value;
+        else if (key == "auto_copy_enabled") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.auto_copy_enabled = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.auto_copy_enabled = false;
+            else return false;
+        }
+        else if (key == "auto_copy_max_duration_hours") config.auto_copy_max_duration_hours = std::stoi(value);
+        else if (key == "auto_copy_max_size_bytes") config.auto_copy_max_size_bytes = std::stoi(value);
         else return false;
     } catch (...) {
         return false;
@@ -724,6 +769,9 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "save_audio") return config.save_audio ? std::make_optional(*config.save_audio ? "true" : "false") : std::nullopt;
     else if (key == "output_file") return config.output_file;
     else if (key == "output_format") return config.output_format;
+    else if (key == "auto_copy_enabled") return config.auto_copy_enabled ? std::make_optional(*config.auto_copy_enabled ? "true" : "false") : std::nullopt;
+    else if (key == "auto_copy_max_duration_hours") return config.auto_copy_max_duration_hours ? std::make_optional(std::to_string(*config.auto_copy_max_duration_hours)) : std::nullopt;
+    else if (key == "auto_copy_max_size_bytes") return config.auto_copy_max_size_bytes ? std::make_optional(std::to_string(*config.auto_copy_max_size_bytes)) : std::nullopt;
     
     return std::nullopt;
 }

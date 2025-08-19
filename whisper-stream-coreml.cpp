@@ -15,6 +15,9 @@
 #include <thread>
 #include <vector>
 #include <iostream>
+#include <sstream>
+#include <cstdlib>
+#include <random>
 
 // Command-line parameters with CoreML specific options
 struct whisper_params {
@@ -47,7 +50,115 @@ struct whisper_params {
     std::string coreml_model = ""; // Optional CoreML model path
     std::string fname_out;
     bool list_models = false; // Flag to list available models
+    
+    // Auto-copy settings
+    bool auto_copy_enabled = false;
+    int32_t auto_copy_max_duration_hours = 2; // Default: 2 hours
+    int32_t auto_copy_max_size_bytes = 1024 * 1024; // Default: 1MB
 };
+
+// Auto-copy functionality
+struct AutoCopySession {
+    std::string session_id;
+    std::chrono::high_resolution_clock::time_point start_time;
+    std::ostringstream transcription_buffer;
+    bool has_been_copied = false;
+    
+    AutoCopySession() {
+        // Generate a unique session ID
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(100000, 999999);
+        session_id = std::to_string(dis(gen));
+        start_time = std::chrono::high_resolution_clock::now();
+    }
+};
+
+std::string trim_whitespace(const std::string& str) {
+    size_t start = str.find_first_not_of(" \t\n\r\f\v");
+    if (start == std::string::npos) {
+        return "";
+    }
+    size_t end = str.find_last_not_of(" \t\n\r\f\v");
+    return str.substr(start, end - start + 1);
+}
+
+bool copy_to_clipboard_macos(const std::string& text) {
+    if (text.empty()) {
+        return false;
+    }
+    
+    // Use pbcopy on macOS to copy to clipboard
+    FILE* pipe = popen("pbcopy", "w");
+    if (!pipe) {
+        return false;
+    }
+    
+    size_t written = fwrite(text.c_str(), 1, text.length(), pipe);
+    int exit_code = pclose(pipe);
+    
+    return (written == text.length() && exit_code == 0);
+}
+
+bool should_auto_copy(const AutoCopySession& session, const whisper_params& params) {
+    if (!params.auto_copy_enabled || session.has_been_copied) {
+        return false;
+    }
+    
+    // Check session duration
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::hours>(now - session.start_time);
+    if (duration.count() > params.auto_copy_max_duration_hours) {
+        return false;
+    }
+    
+    // Check content size
+    std::string content = session.transcription_buffer.str();
+    if (content.size() > static_cast<size_t>(params.auto_copy_max_size_bytes)) {
+        return false;
+    }
+    
+    return true;
+}
+
+void perform_auto_copy(AutoCopySession& session, const whisper_params& params) {
+    if (!should_auto_copy(session, params)) {
+        return;
+    }
+    
+    std::string content = session.transcription_buffer.str();
+    content = trim_whitespace(content);
+    
+    if (content.empty()) {
+        printf("Auto-copy skipped: no content to copy.\n");
+        return;
+    }
+    
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::hours>(now - session.start_time);
+    
+    // Check duration limit
+    if (duration.count() > params.auto_copy_max_duration_hours) {
+        printf("Auto-copy skipped: session duration (%ld hours) exceeded limit (%d hours).\n", 
+               duration.count(), params.auto_copy_max_duration_hours);
+        return;
+    }
+    
+    // Check size limit
+    if (content.size() > static_cast<size_t>(params.auto_copy_max_size_bytes)) {
+        printf("Auto-copy skipped: content size (%zu bytes) exceeded limit (%d bytes).\n", 
+               content.size(), params.auto_copy_max_size_bytes);
+        return;
+    }
+    
+    // Perform the copy
+    if (copy_to_clipboard_macos(content)) {
+        printf("Transcription copied.\n");
+        session.has_been_copied = true;
+    } else {
+        printf("Auto-copy failed: unable to copy to clipboard.\n");
+    }
+}
 
 void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
@@ -87,6 +198,11 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-cm"   || arg == "--coreml-model")  { params.coreml_model  = argv[++i]; }
         // Model management options
         else if (arg == "--list-models")                     { params.list_models   = true; }
+        // Auto-copy options
+        else if (arg == "--auto-copy")                       { params.auto_copy_enabled = true; }
+        else if (arg == "--no-auto-copy")                    { params.auto_copy_enabled = false; }
+        else if (arg == "--auto-copy-max-duration")          { params.auto_copy_max_duration_hours = std::stoi(argv[++i]); }
+        else if (arg == "--auto-copy-max-size")              { params.auto_copy_max_size_bytes = std::stoi(argv[++i]); }
         // Config management options
         else if (arg == "config") {
             if (i + 1 < argc) {
@@ -96,18 +212,18 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
                 
                 if (config_cmd == "list") {
                     config_manager.list_config();
-                    return 0;
+                    exit(0);
                 } else if (config_cmd == "set" && i + 2 < argc) {
                     std::string key = argv[++i];
                     std::string value = argv[++i];
                     if (config_manager.set_config(key, value)) {
                         config_manager.save_user_config();
                         std::cout << "Set " << key << " = " << value << std::endl;
+                        exit(0);
                     } else {
                         std::cerr << "Failed to set config: " << key << std::endl;
-                        return 1;
+                        exit(1);
                     }
-                    return 0;
                 } else if (config_cmd == "get" && i + 1 < argc) {
                     std::string key = argv[++i];
                     auto value = config_manager.get_config(key);
@@ -116,26 +232,26 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
                     } else {
                         std::cout << key << " is not set" << std::endl;
                     }
-                    return 0;
+                    exit(0);
                 } else if (config_cmd == "unset" && i + 1 < argc) {
                     std::string key = argv[++i];
                     if (config_manager.unset_config(key)) {
                         config_manager.save_user_config();
                         std::cout << "Unset " << key << std::endl;
+                        exit(0);
                     } else {
                         std::cerr << "Failed to unset config: " << key << std::endl;
-                        return 1;
+                        exit(1);
                     }
-                    return 0;
                 } else if (config_cmd == "reset") {
                     config_manager.reset_config();
                     config_manager.save_user_config();
                     std::cout << "Configuration reset to defaults" << std::endl;
-                    return 0;
+                    exit(0);
                 } else {
                     std::cerr << "Unknown config command: " << config_cmd << std::endl;
                     std::cerr << "Available commands: list, set <key> <value>, get <key>, unset <key>, reset" << std::endl;
-                    return 1;
+                    exit(1);
                 }
             } else {
                 std::cerr << "Config command requires a subcommand" << std::endl;
@@ -186,6 +302,12 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -coreml,  --coreml        [%-7s] enable CoreML acceleration (macOS)\n",             params.use_coreml ? "true" : "false");
     fprintf(stderr, "  -ncoreml, --no-coreml     [%-7s] disable CoreML acceleration\n",                    params.use_coreml ? "false" : "true");
     fprintf(stderr, "  -cm FNAME,--coreml-model FNAME [%-7s] CoreML model path\n",                        params.coreml_model.c_str());
+    fprintf(stderr, "\n");
+    fprintf(stderr, "auto-copy options:\n");
+    fprintf(stderr, "            --auto-copy     [%-7s] automatically copy transcription to clipboard when session ends\n", params.auto_copy_enabled ? "true" : "false");
+    fprintf(stderr, "            --no-auto-copy  [%-7s] disable auto-copy functionality\n",                params.auto_copy_enabled ? "false" : "true");
+    fprintf(stderr, "            --auto-copy-max-duration N [%-7d] max session duration in hours before skipping auto-copy\n", params.auto_copy_max_duration_hours);
+    fprintf(stderr, "            --auto-copy-max-size N     [%-7d] max transcription size in bytes before skipping auto-copy\n", params.auto_copy_max_size_bytes);
     fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models   list available models for download\n");
@@ -397,6 +519,15 @@ int main(int argc, char ** argv) {
     printf("[Start speaking]\n");
     fflush(stdout);
 
+    // Initialize auto-copy session
+    AutoCopySession auto_copy_session;
+    if (params.auto_copy_enabled) {
+        printf("Auto-copy enabled (Session ID: %s, Max Duration: %d hours, Max Size: %d bytes)\n", 
+               auto_copy_session.session_id.c_str(), 
+               params.auto_copy_max_duration_hours, 
+               params.auto_copy_max_size_bytes);
+    }
+
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
 
@@ -534,6 +665,11 @@ int main(int argc, char ** argv) {
                         if (params.fname_out.length() > 0) {
                             fout << text;
                         }
+                        
+                        // Add to auto-copy buffer (without timestamps for plain text mode)
+                        if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                            auto_copy_session.transcription_buffer << text;
+                        }
                     } else {
                         const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                         const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
@@ -576,6 +712,15 @@ int main(int argc, char ** argv) {
                             output += "\n";
                             fout << output;
                         }
+                        
+                        // Add to auto-copy buffer (with timestamps for timestamped mode)
+                        if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                            auto_copy_session.transcription_buffer << timestamp_prefix << text;
+                            if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
+                                auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                            }
+                            auto_copy_session.transcription_buffer << "\n";
+                        }
                     }
                 }
 
@@ -610,6 +755,12 @@ int main(int argc, char ** argv) {
     }
 
     audio.pause();
+    
+    // Perform auto-copy when session ends
+    if (params.auto_copy_enabled) {
+        perform_auto_copy(auto_copy_session, params);
+    }
+    
     whisper_print_timings(ctx);
     whisper_free(ctx);
 

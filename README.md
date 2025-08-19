@@ -167,6 +167,9 @@ export WHISPER_COREML=true
 export WHISPER_VAD_THRESHOLD=0.7
 export WHISPER_STEP_MS=3000
 export WHISPER_LANGUAGE=en
+export WHISPER_AUTO_COPY=true
+export WHISPER_AUTO_COPY_MAX_DURATION=2
+export WHISPER_AUTO_COPY_MAX_SIZE=1048576
 ```
 
 ### Configuration File Format
@@ -183,7 +186,10 @@ Configuration files use JSON format:
   "length_ms": 10000,
   "language": "en",
   "translate": false,
-  "save_audio": false
+  "save_audio": false,
+  "auto_copy_enabled": true,
+  "auto_copy_max_duration_hours": 2,
+  "auto_copy_max_size_bytes": 1048576
 }
 ```
 
@@ -209,6 +215,11 @@ Configuration files use JSON format:
 - `save_audio` - Save recorded audio
 - `output` / `output_file` - Output file path
 - `format` / `output_format` - Output format (json, plain, timestamped)
+
+### Auto-Copy Configuration
+- `auto_copy` / `auto_copy_enabled` - Enable/disable automatic clipboard copy when session ends
+- `auto_copy_max_duration` / `auto_copy_max_duration_hours` - Maximum session duration (hours) before skipping auto-copy (default: 2)
+- `auto_copy_max_size` / `auto_copy_max_size_bytes` - Maximum transcription size (bytes) before skipping auto-copy (default: 1MB)
 
 ## Performance Tips
 
@@ -254,6 +265,25 @@ Configuration files use JSON format:
 ### Fast processing with tiny model
 ```bash
 ./whisper-stream-coreml -m tiny.en --step 500
+```
+
+### Auto-copy transcription results
+```bash
+# Enable auto-copy with default settings (2 hours max, 1MB max)
+./whisper-stream-coreml -m base.en --auto-copy
+
+# Enable auto-copy with custom limits
+./whisper-stream-coreml -m base.en --auto-copy --auto-copy-max-duration 1 --auto-copy-max-size 500000
+
+# Configure via environment variables
+export WHISPER_AUTO_COPY=true
+export WHISPER_AUTO_COPY_MAX_DURATION=3
+./whisper-stream-coreml -m base.en
+
+# Configure via config file
+./whisper-stream-coreml config set auto_copy_enabled true
+./whisper-stream-coreml config set auto_copy_max_duration_hours 1
+./whisper-stream-coreml -m base.en
 ```
 
 ## Available Models

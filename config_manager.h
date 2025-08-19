@@ -37,6 +37,11 @@ struct ConfigData {
     // Output settings
     std::optional<std::string> output_file;
     std::optional<std::string> output_format; // json, plain, timestamped
+    
+    // Auto-copy settings
+    std::optional<bool> auto_copy_enabled;
+    std::optional<int> auto_copy_max_duration_hours;
+    std::optional<int> auto_copy_max_size_bytes;
 };
 
 class ConfigManager {
