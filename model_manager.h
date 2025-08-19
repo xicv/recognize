@@ -38,6 +38,7 @@ public:
     // Interactive model selection
     std::string prompt_model_selection();
     bool prompt_download_confirmation(const std::string& model_name);
+    std::string prompt_model_not_found(const std::string& model_name, bool use_coreml);
     
     // Get model info
     ModelInfo get_model_info(const std::string& model_name);

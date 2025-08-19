@@ -39,6 +39,7 @@ set(TARGET whisper-stream-coreml)
 add_executable(${TARGET} 
     whisper-stream-coreml.cpp
     model_manager.cpp
+    config_manager.cpp
     ../../fixtures/whisper.cpp/examples/common.cpp
     ../../fixtures/whisper.cpp/examples/common-whisper.cpp
     ../../fixtures/whisper.cpp/examples/common-sdl.cpp

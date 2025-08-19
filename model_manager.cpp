@@ -239,12 +239,78 @@ bool ModelManager::prompt_download_confirmation(const std::string& model_name) {
     std::cout << "🚀 CoreML acceleration: Available\n";
 #endif
     
-    std::cout << "\nWould you like to download it? [Y/n]: ";
+    std::cout << "\nChoose an option:\n";
+    std::cout << "  1. Download '" << model_name << "' (" << info.size_mb << " MB)\n";
+    std::cout << "  2. Choose a different model\n";
+    std::cout << "  3. Cancel\n";
+    std::cout << "\nEnter choice [1-3]: ";
     
     std::string response;
     std::getline(std::cin, response);
     
-    return response.empty() || response == "y" || response == "Y" || response == "yes";
+    if (response == "1" || response.empty()) {
+        return true;  // Download the requested model
+    } else if (response == "2") {
+        return false; // This will be handled differently - we'll trigger model selection
+    } else {
+        return false; // Cancel
+    }
+}
+
+std::string ModelManager::prompt_model_not_found(const std::string& model_name, bool use_coreml) {
+    ModelInfo info = get_model_info(model_name);
+    
+    std::cout << "\n📦 Model '" << model_name << "' not found locally.\n";
+    std::cout << "📄 " << info.description << "\n";
+    std::cout << "📁 Size: " << info.size_mb << " MB\n";
+    
+#ifdef __APPLE__
+    std::cout << "🚀 CoreML acceleration: Available\n";
+#endif
+    
+    std::cout << "\nChoose an option:\n";
+    std::cout << "  1. Download '" << model_name << "' (" << info.size_mb << " MB)\n";
+    std::cout << "  2. Choose a different model\n";
+    std::cout << "  3. Cancel\n";
+    std::cout << "\nEnter choice [1-3]: ";
+    
+    std::string response;
+    std::getline(std::cin, response);
+    
+    if (response == "1" || response.empty()) {
+        // Download the requested model
+        std::cout << "\n🚀 Starting download...\n";
+        
+        if (!download_model(model_name)) {
+            return "";
+        }
+        
+        #ifdef __APPLE__
+        if (use_coreml) {
+            std::cout << "\n🤖 Downloading CoreML acceleration model...\n";
+            if (!download_coreml_model(model_name)) {
+                std::cout << "⚠️  CoreML download failed, will use regular model\n";
+            }
+        }
+        #endif
+        
+        show_usage_examples(model_name);
+        return get_model_path(model_name);
+        
+    } else if (response == "2") {
+        // Let user choose a different model
+        std::string selected_model = prompt_model_selection();
+        if (selected_model.empty()) {
+            return "";
+        }
+        
+        // Recursively resolve the selected model
+        return resolve_model(selected_model, use_coreml);
+        
+    } else {
+        std::cout << "\n❌ Operation cancelled.\n";
+        return "";
+    }
 }
 
 ModelInfo ModelManager::get_model_info(const std::string& model_name) {
@@ -279,7 +345,25 @@ bool ModelManager::download_file(const std::string& url, const std::string& file
 bool ModelManager::extract_coreml_model(const std::string& zip_path, const std::string& extract_dir) {
     std::cout << "📦 Extracting CoreML model...\n";
     
-    std::string command = "cd \"" + extract_dir + "\" && unzip -q \"" + zip_path + "\"";
+    // Check if zip file exists
+    if (!std::filesystem::exists(zip_path)) {
+        std::cout << "❌ Zip file not found: " << zip_path << "\n";
+        return false;
+    }
+    
+    // Get absolute paths
+    std::filesystem::path abs_zip_path = std::filesystem::absolute(zip_path);
+    std::filesystem::path abs_extract_dir = std::filesystem::absolute(extract_dir);
+    
+    // Ensure extract directory exists
+    std::filesystem::create_directories(abs_extract_dir);
+    
+    std::string command = "cd \"" + abs_extract_dir.string() + "\" && unzip -q \"" + abs_zip_path.string() + "\"";
+    
+    // Debug output
+    std::cout << "Extracting: " << abs_zip_path.string() << "\n";
+    std::cout << "To: " << abs_extract_dir.string() << "\n";
+    
     int result = std::system(command.c_str());
     
     if (result == 0) {
@@ -288,7 +372,8 @@ bool ModelManager::extract_coreml_model(const std::string& zip_path, const std::
         std::filesystem::remove(zip_path);
         return true;
     } else {
-        std::cout << "❌ Failed to extract CoreML model\n";
+        std::cout << "❌ Failed to extract CoreML model (exit code: " << result << ")\n";
+        std::cout << "Command: " << command << "\n";
         return false;
     }
 }
@@ -407,30 +492,6 @@ std::string ModelManager::resolve_model(const std::string& model_arg, bool use_c
         return get_model_path(model_name);
     }
     
-    // Model doesn't exist, prompt for download
-    if (!prompt_download_confirmation(model_name)) {
-        return "";
-    }
-    
-    std::cout << "\n🚀 Starting download...\n";
-    
-    // Download main model
-    if (!download_model(model_name)) {
-        return "";
-    }
-    
-    #ifdef __APPLE__
-    // Download CoreML model if on macOS and CoreML is requested
-    if (use_coreml) {
-        std::cout << "\n🤖 Downloading CoreML acceleration model...\n";
-        if (!download_coreml_model(model_name)) {
-            std::cout << "⚠️  CoreML download failed, will use regular model\n";
-        }
-    }
-    #endif
-    
-    // Show usage examples
-    show_usage_examples(model_name);
-    
-    return get_model_path(model_name);
+    // Model doesn't exist, use enhanced prompt with model selection option
+    return prompt_model_not_found(model_name, use_coreml);
 }

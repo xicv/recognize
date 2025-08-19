@@ -116,6 +116,33 @@ run-vad: build
 list-models: build
 	@./$(TARGET) --list-models
 
+# Configuration management
+.PHONY: config-list
+config-list: build
+	@./$(TARGET) config list
+
+.PHONY: config-set
+config-set: build
+	@if [ -z "$(KEY)" ] || [ -z "$(VALUE)" ]; then \
+		echo "$(RED)Error: Please specify KEY and VALUE. Example: make config-set KEY=model VALUE=base.en$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Setting $(KEY) = $(VALUE)$(NC)"
+	@./$(TARGET) config set $(KEY) $(VALUE)
+
+.PHONY: config-get
+config-get: build
+	@if [ -z "$(KEY)" ]; then \
+		echo "$(RED)Error: Please specify KEY. Example: make config-get KEY=model$(NC)"; \
+		exit 1; \
+	fi
+	@./$(TARGET) config get $(KEY)
+
+.PHONY: config-reset
+config-reset: build
+	@echo "$(YELLOW)Resetting configuration to defaults...$(NC)"
+	@./$(TARGET) config reset
+
 # Test build
 .PHONY: test
 test: build
@@ -143,6 +170,12 @@ help:
 	@echo "  make run-vad      - Run VAD mode (MODEL=base.en by default)"
 	@echo "  make list-models  - Show available models"
 	@echo ""
+	@echo "$(YELLOW)Configuration:$(NC)"
+	@echo "  make config-list  - Show current configuration"
+	@echo "  make config-set KEY=value - Set configuration value"
+	@echo "  make config-get KEY=key - Get configuration value"
+	@echo "  make config-reset - Reset configuration to defaults"
+	@echo ""
 	@echo "$(YELLOW)Installation:$(NC)"
 	@echo "  make install      - Install system-wide (/usr/local/bin)"
 	@echo "  make install-user - Install for current user (~/bin)"
@@ -157,6 +190,9 @@ help:
 	@echo "  make install-deps && make build"
 	@echo "  make run-model MODEL=tiny.en"
 	@echo "  make run-vad MODEL=base.en"
+	@echo "  make config-set KEY=model VALUE=base.en"
+	@echo "  make config-get KEY=threads"
+	@echo "  make config-list"
 	@echo "  make clean && make build"
 
 # Show system info

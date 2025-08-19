@@ -10,6 +10,7 @@ A macOS CLI for real-time speech recognition with CoreML acceleration, based on 
 - Voice Activity Detection (VAD) 
 - Configurable audio parameters
 - Multiple output formats (timestamped, plain text, file output)
+- Comprehensive configuration system with JSON files and environment variables
 
 ## Requirements
 
@@ -113,6 +114,97 @@ make list-models
 - `-sa, --save-audio` - Save recorded audio to WAV file
 - `--no-timestamps` - Disable timestamp output (auto in continuous mode)
 - `-ps, --print-special` - Print special tokens
+
+## Configuration Management
+
+The CLI supports a comprehensive configuration system with multiple layers:
+
+### Configuration Sources (in priority order)
+1. **Command-line arguments** (highest priority)
+2. **Environment variables** 
+3. **Project config file** (`.whisper-config.json` or `config.json`)
+4. **User config file** (`~/.whisper-stream-coreml/config.json`)
+
+### Config Commands
+```bash
+# Show current configuration
+./whisper-stream-coreml config list
+
+# Set configuration values
+./whisper-stream-coreml config set model base.en
+./whisper-stream-coreml config set threads 8
+./whisper-stream-coreml config set use_coreml true
+
+# Get configuration values
+./whisper-stream-coreml config get model
+./whisper-stream-coreml config get threads
+
+# Remove configuration values
+./whisper-stream-coreml config unset model
+
+# Reset all configuration to defaults
+./whisper-stream-coreml config reset
+```
+
+### Makefile Shortcuts
+```bash
+# Configuration management via Makefile
+make config-list
+make config-set KEY=model VALUE=base.en
+make config-get KEY=threads
+make config-reset
+```
+
+### Environment Variables
+All configuration options can be set via environment variables with the `WHISPER_` prefix:
+
+```bash
+export WHISPER_MODEL=base.en
+export WHISPER_THREADS=8
+export WHISPER_COREML=true
+export WHISPER_VAD_THRESHOLD=0.7
+export WHISPER_STEP_MS=3000
+export WHISPER_LANGUAGE=en
+```
+
+### Configuration File Format
+Configuration files use JSON format:
+
+```json
+{
+  "default_model": "base.en",
+  "threads": 8,
+  "use_coreml": true,
+  "vad_threshold": 0.6,
+  "step_ms": 3000,
+  "length_ms": 10000,
+  "language": "en",
+  "translate": false,
+  "save_audio": false
+}
+```
+
+### Available Configuration Keys
+- `model` / `default_model` - Default model to use
+- `models_dir` / `models_directory` - Directory to store models
+- `coreml` / `use_coreml` - Enable/disable CoreML acceleration
+- `coreml_model` - Specific CoreML model path
+- `capture` / `capture_device` - Audio capture device ID
+- `step` / `step_ms` - Audio step size in milliseconds
+- `length` / `length_ms` - Audio length in milliseconds  
+- `keep` / `keep_ms` - Audio to keep from previous step
+- `vad` / `vad_threshold` - Voice activity detection threshold
+- `freq` / `freq_threshold` - High-pass frequency cutoff
+- `threads` - Number of processing threads
+- `tokens` / `max_tokens` - Maximum tokens per chunk
+- `beam` / `beam_size` - Beam search size
+- `language` / `lang` - Source language
+- `translate` - Translate to English
+- `timestamps` / `no_timestamps` - Disable timestamps
+- `special` / `print_special` - Print special tokens
+- `save_audio` - Save recorded audio
+- `output` / `output_file` - Output file path
+- `format` / `output_format` - Output format (json, plain, timestamped)
 
 ## Performance Tips
 

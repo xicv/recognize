@@ -6,6 +6,7 @@
 #include "common-whisper.h"
 #include "whisper.h"
 #include "model_manager.h"
+#include "config_manager.h"
 
 #include <chrono>
 #include <cstdio>
@@ -84,6 +85,62 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-cm"   || arg == "--coreml-model")  { params.coreml_model  = argv[++i]; }
         // Model management options
         else if (arg == "--list-models")                     { params.list_models   = true; }
+        // Config management options
+        else if (arg == "config") {
+            if (i + 1 < argc) {
+                std::string config_cmd = argv[++i];
+                ConfigManager config_manager;
+                config_manager.load_config();
+                
+                if (config_cmd == "list") {
+                    config_manager.list_config();
+                    return 0;
+                } else if (config_cmd == "set" && i + 2 < argc) {
+                    std::string key = argv[++i];
+                    std::string value = argv[++i];
+                    if (config_manager.set_config(key, value)) {
+                        config_manager.save_user_config();
+                        std::cout << "Set " << key << " = " << value << std::endl;
+                    } else {
+                        std::cerr << "Failed to set config: " << key << std::endl;
+                        return 1;
+                    }
+                    return 0;
+                } else if (config_cmd == "get" && i + 1 < argc) {
+                    std::string key = argv[++i];
+                    auto value = config_manager.get_config(key);
+                    if (value) {
+                        std::cout << key << " = " << *value << std::endl;
+                    } else {
+                        std::cout << key << " is not set" << std::endl;
+                    }
+                    return 0;
+                } else if (config_cmd == "unset" && i + 1 < argc) {
+                    std::string key = argv[++i];
+                    if (config_manager.unset_config(key)) {
+                        config_manager.save_user_config();
+                        std::cout << "Unset " << key << std::endl;
+                    } else {
+                        std::cerr << "Failed to unset config: " << key << std::endl;
+                        return 1;
+                    }
+                    return 0;
+                } else if (config_cmd == "reset") {
+                    config_manager.reset_config();
+                    config_manager.save_user_config();
+                    std::cout << "Configuration reset to defaults" << std::endl;
+                    return 0;
+                } else {
+                    std::cerr << "Unknown config command: " << config_cmd << std::endl;
+                    std::cerr << "Available commands: list, set <key> <value>, get <key>, unset <key>, reset" << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "Config command requires a subcommand" << std::endl;
+                return 1;
+            }
+        }
+        else if (arg == "--no-timestamps")                   { params.no_timestamps = true; }
 
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
@@ -130,11 +187,21 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models   list available models for download\n");
     fprintf(stderr, "\n");
+    fprintf(stderr, "configuration:\n");
+    fprintf(stderr, "  config list                 show current configuration\n");
+    fprintf(stderr, "  config set <key> <value>    set configuration value\n");
+    fprintf(stderr, "  config get <key>            get configuration value\n");
+    fprintf(stderr, "  config unset <key>          unset configuration value\n");
+    fprintf(stderr, "  config reset                reset all configuration to defaults\n");
+    fprintf(stderr, "\n");
     fprintf(stderr, "examples:\n");
     fprintf(stderr, "  %s                                    # interactive model selection\n", argv[0]);
     fprintf(stderr, "  %s -m base.en                        # download and use base.en model\n", argv[0]);
     fprintf(stderr, "  %s -m tiny.en --step 0 --length 30000 # VAD mode with tiny model\n", argv[0]);
     fprintf(stderr, "  %s --list-models                      # show available models\n", argv[0]);
+    fprintf(stderr, "  %s config set model base.en           # set default model\n", argv[0]);
+    fprintf(stderr, "  %s config set threads 8               # set default thread count\n", argv[0]);
+    fprintf(stderr, "  %s config list                        # show current config\n", argv[0]);
     fprintf(stderr, "\n");
 }
 
@@ -142,6 +209,11 @@ int main(int argc, char ** argv) {
     ggml_backend_load_all();
 
     whisper_params params;
+
+    // Load configuration before parsing command line
+    ConfigManager config_manager;
+    config_manager.load_config();
+    config_manager.apply_to_params(params);
 
     if (whisper_params_parse(argc, argv, params) == false) {
         return 1;
@@ -165,6 +237,28 @@ int main(int argc, char ** argv) {
     
     // Update params with resolved model path
     params.model = resolved_model;
+    
+    // Auto-set CoreML model path if CoreML is enabled and not explicitly set
+    if (params.use_coreml && params.coreml_model.empty()) {
+        // Extract model name from the resolved path
+        std::filesystem::path model_path(resolved_model);
+        std::string model_filename = model_path.filename().string();
+        
+        // Try to find corresponding model name
+        for (const auto& name : model_manager.get_model_names()) {
+            if (model_manager.get_model_path(name) == resolved_model) {
+                std::string coreml_path = model_manager.get_coreml_model_path(name);
+                if (model_manager.coreml_model_exists(name)) {
+                    params.coreml_model = coreml_path;
+                    std::cout << "✅ Auto-detected CoreML model: " << coreml_path << "\n";
+                } else {
+                    std::cout << "⚠️  CoreML enabled but model not available: " << coreml_path << "\n";
+                    params.use_coreml = false;  // Disable CoreML to prevent crashes
+                }
+                break;
+            }
+        }
+    }
 
     params.keep_ms   = std::min(params.keep_ms,   params.step_ms);
     params.length_ms = std::max(params.length_ms, params.step_ms);
