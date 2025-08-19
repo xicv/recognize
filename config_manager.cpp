@@ -260,8 +260,8 @@ void ConfigManager::list_config() const {
     std::cout << "======================\n\n";
     
     // Show system paths first
-    std::cout << "System Paths:\n";
-    std::cout << "  models_location: " << (effective.models_directory ? *effective.models_directory : "models/") << "\n";
+    std::cout << "System Paths (configurable):\n";
+    std::cout << "  models_location: " << (effective.models_directory ? *effective.models_directory : "models/") << " (set via: config set models_dir <path>)\n";
     std::cout << "  user_config: " << (user_config_path_.empty() ? "not available" : user_config_path_) << "\n";
     std::cout << "  project_config: " << project_config_path_ << "\n";
     std::cout << "\n";
@@ -316,6 +316,14 @@ void ConfigManager::list_config() const {
     };
     
     print_config("Effective Configuration", effective);
+    
+    std::cout << "💡 Quick Config Examples:\n";
+    std::cout << "   config set models_dir /custom/path     # Change models location\n";
+    std::cout << "   config set model base.en               # Set default model\n";
+    std::cout << "   config set threads 8                   # Set thread count\n";
+    std::cout << "   config set print_colors true           # Enable colored output\n";
+    std::cout << "   config get <key>                       # Get any setting\n";
+    std::cout << "   config reset                           # Reset all to defaults\n";
 }
 
 void ConfigManager::reset_config() {
