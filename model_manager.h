@@ -45,6 +45,8 @@ public:
     
     // Setup models directory
     void ensure_models_directory();
+    void set_models_directory(const std::string& models_dir);
+    std::string get_models_directory() const;
     
     // Auto-resolve model (main entry point)
     std::string resolve_model(const std::string& model_arg, bool use_coreml);

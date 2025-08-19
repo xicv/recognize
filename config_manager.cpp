@@ -102,6 +102,7 @@ struct whisper_params {
     bool translate = false;
     bool no_fallback = false;
     bool print_special = false;
+    bool print_colors = false;
     bool no_context = true;
     bool no_timestamps = false;
     bool tinydiarize = false;
@@ -172,6 +173,7 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.translate) params.translate = *effective.translate;
     if (effective.no_timestamps) params.no_timestamps = *effective.no_timestamps;
     if (effective.print_special) params.print_special = *effective.print_special;
+    if (effective.print_colors) params.print_colors = *effective.print_colors;
     if (effective.save_audio) params.save_audio = *effective.save_audio;
     if (effective.output_file) params.fname_out = *effective.output_file;
 }
@@ -209,6 +211,8 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"no_timestamps", "no_timestamps"},
         {"special", "print_special"},
         {"print_special", "print_special"},
+        {"colors", "print_colors"},
+        {"print_colors", "print_colors"},
         {"save_audio", "save_audio"},
         {"output", "output_file"},
         {"output_file", "output_file"},
@@ -255,6 +259,13 @@ void ConfigManager::list_config() const {
     std::cout << "Current Configuration:\n";
     std::cout << "======================\n\n";
     
+    // Show system paths first
+    std::cout << "System Paths:\n";
+    std::cout << "  models_location: " << (effective.models_directory ? *effective.models_directory : "models/") << "\n";
+    std::cout << "  user_config: " << (user_config_path_.empty() ? "not available" : user_config_path_) << "\n";
+    std::cout << "  project_config: " << project_config_path_ << "\n";
+    std::cout << "\n";
+    
     auto print_config = [](const std::string& section, const ConfigData& config) {
         std::cout << section << ":\n";
         
@@ -292,6 +303,8 @@ void ConfigManager::list_config() const {
             std::cout << "  no_timestamps: " << (*config.no_timestamps ? "true" : "false") << "\n";
         if (config.print_special) 
             std::cout << "  print_special: " << (*config.print_special ? "true" : "false") << "\n";
+        if (config.print_colors) 
+            std::cout << "  print_colors: " << (*config.print_colors ? "true" : "false") << "\n";
         if (config.save_audio) 
             std::cout << "  save_audio: " << (*config.save_audio ? "true" : "false") << "\n";
         if (config.output_file) 
@@ -338,6 +351,7 @@ void ConfigManager::load_env_vars() {
     env_config_.translate = get_env_bool("WHISPER_TRANSLATE");
     env_config_.no_timestamps = get_env_bool("WHISPER_NO_TIMESTAMPS");
     env_config_.print_special = get_env_bool("WHISPER_PRINT_SPECIAL");
+    env_config_.print_colors = get_env_bool("WHISPER_PRINT_COLORS");
     env_config_.save_audio = get_env_bool("WHISPER_SAVE_AUDIO");
     env_config_.output_file = get_env_var("WHISPER_OUTPUT_FILE");
     env_config_.output_format = get_env_var("WHISPER_OUTPUT_FORMAT");
@@ -419,6 +433,7 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.translate) merged.translate = config.translate;
         if (config.no_timestamps) merged.no_timestamps = config.no_timestamps;
         if (config.print_special) merged.print_special = config.print_special;
+        if (config.print_colors) merged.print_colors = config.print_colors;
         if (config.save_audio) merged.save_audio = config.save_audio;
         if (config.output_file) merged.output_file = config.output_file;
         if (config.output_format) merged.output_format = config.output_format;
@@ -473,6 +488,7 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.translate) add_bool("translate", *config.translate);
     if (config.no_timestamps) add_bool("no_timestamps", *config.no_timestamps);
     if (config.print_special) add_bool("print_special", *config.print_special);
+    if (config.print_colors) add_bool("print_colors", *config.print_colors);
     if (config.save_audio) add_bool("save_audio", *config.save_audio);
     if (config.output_file) add_field("output_file", *config.output_file);
     if (config.output_format) add_field("output_format", *config.output_format);
@@ -533,6 +549,7 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.translate = get_bool("translate");
     config.no_timestamps = get_bool("no_timestamps");
     config.print_special = get_bool("print_special");
+    config.print_colors = get_bool("print_colors");
     config.save_audio = get_bool("save_audio");
     config.output_file = get_string("output_file");
     config.output_format = get_string("output_format");
@@ -603,6 +620,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "translate") config.translate = std::nullopt;
         else if (key == "no_timestamps") config.no_timestamps = std::nullopt;
         else if (key == "print_special") config.print_special = std::nullopt;
+        else if (key == "print_colors") config.print_colors = std::nullopt;
         else if (key == "save_audio") config.save_audio = std::nullopt;
         else if (key == "output_file") config.output_file = std::nullopt;
         else if (key == "output_format") config.output_format = std::nullopt;
@@ -652,6 +670,13 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
             else if (lower == "false" || lower == "0" || lower == "no") config.print_special = false;
             else return false;
         }
+        else if (key == "print_colors") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.print_colors = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.print_colors = false;
+            else return false;
+        }
         else if (key == "save_audio") {
             std::string lower = value;
             std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
@@ -687,6 +712,7 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "translate") return config.translate ? std::make_optional(*config.translate ? "true" : "false") : std::nullopt;
     else if (key == "no_timestamps") return config.no_timestamps ? std::make_optional(*config.no_timestamps ? "true" : "false") : std::nullopt;
     else if (key == "print_special") return config.print_special ? std::make_optional(*config.print_special ? "true" : "false") : std::nullopt;
+    else if (key == "print_colors") return config.print_colors ? std::make_optional(*config.print_colors ? "true" : "false") : std::nullopt;
     else if (key == "save_audio") return config.save_audio ? std::make_optional(*config.save_audio ? "true" : "false") : std::nullopt;
     else if (key == "output_file") return config.output_file;
     else if (key == "output_format") return config.output_format;

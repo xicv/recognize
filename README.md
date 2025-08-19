@@ -127,13 +127,14 @@ The CLI supports a comprehensive configuration system with multiple layers:
 
 ### Config Commands
 ```bash
-# Show current configuration
+# Show current configuration (including system paths)
 ./whisper-stream-coreml config list
 
 # Set configuration values
 ./whisper-stream-coreml config set model base.en
 ./whisper-stream-coreml config set threads 8
 ./whisper-stream-coreml config set use_coreml true
+./whisper-stream-coreml config set models_dir /custom/path/to/models
 
 # Get configuration values
 ./whisper-stream-coreml config get model
@@ -160,6 +161,7 @@ All configuration options can be set via environment variables with the `WHISPER
 
 ```bash
 export WHISPER_MODEL=base.en
+export WHISPER_MODELS_DIR=/custom/path/to/models
 export WHISPER_THREADS=8
 export WHISPER_COREML=true
 export WHISPER_VAD_THRESHOLD=0.7
@@ -173,6 +175,7 @@ Configuration files use JSON format:
 ```json
 {
   "default_model": "base.en",
+  "models_directory": "/custom/path/to/models",
   "threads": 8,
   "use_coreml": true,
   "vad_threshold": 0.6,
@@ -202,6 +205,7 @@ Configuration files use JSON format:
 - `translate` - Translate to English
 - `timestamps` / `no_timestamps` - Disable timestamps
 - `special` / `print_special` - Print special tokens
+- `colors` / `print_colors` - Print colors based on token confidence
 - `save_audio` - Save recorded audio
 - `output` / `output_file` - Output file path
 - `format` / `output_format` - Output format (json, plain, timestamped)

@@ -142,6 +142,15 @@ void ModelManager::ensure_models_directory() {
     std::filesystem::create_directories(models_dir_);
 }
 
+void ModelManager::set_models_directory(const std::string& models_dir) {
+    models_dir_ = models_dir;
+    ensure_models_directory();
+}
+
+std::string ModelManager::get_models_directory() const {
+    return models_dir_;
+}
+
 bool ModelManager::model_exists(const std::string& model_name) {
     if (models_.find(model_name) == models_.end()) {
         return false;

@@ -31,6 +31,7 @@ struct ConfigData {
     std::optional<bool> translate;
     std::optional<bool> no_timestamps;
     std::optional<bool> print_special;
+    std::optional<bool> print_colors;
     std::optional<bool> save_audio;
     
     // Output settings

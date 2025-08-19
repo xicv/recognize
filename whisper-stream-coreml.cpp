@@ -33,6 +33,7 @@ struct whisper_params {
     bool translate     = false;
     bool no_fallback   = false;
     bool print_special = false;
+    bool print_colors  = false;
     bool no_context    = true;
     bool no_timestamps = false;
     bool tinydiarize   = false;
@@ -71,6 +72,7 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-tr"   || arg == "--translate")     { params.translate     = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")   { params.no_fallback   = true; }
         else if (arg == "-ps"   || arg == "--print-special") { params.print_special = true; }
+        else if (arg == "-pc"   || arg == "--print-colors")  { params.print_colors  = true; }
         else if (arg == "-kc"   || arg == "--keep-context")  { params.no_context    = false; }
         else if (arg == "-l"    || arg == "--language")      { params.language      = argv[++i]; }
         else if (arg == "-m"    || arg == "--model")         { params.model         = argv[++i]; }
@@ -171,6 +173,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -tr,      --translate     [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
     fprintf(stderr, "  -nf,      --no-fallback   [%-7s] do not use temperature fallback while decoding\n", params.no_fallback ? "true" : "false");
     fprintf(stderr, "  -ps,      --print-special [%-7s] print special tokens\n",                           params.print_special ? "true" : "false");
+    fprintf(stderr, "  -pc,      --print-colors  [%-7s] print colors based on token confidence\n",         params.print_colors ? "true" : "false");
     fprintf(stderr, "  -kc,      --keep-context  [%-7s] keep context between audio chunks\n",              params.no_context ? "false" : "true");
     fprintf(stderr, "  -l LANG,  --language LANG [%-7s] spoken language\n",                                params.language.c_str());
     fprintf(stderr, "  -m FNAME, --model FNAME   [%-7s] model path\n",                                     params.model.c_str());
@@ -221,6 +224,12 @@ int main(int argc, char ** argv) {
 
     // Initialize model manager
     ModelManager model_manager;
+    
+    // Apply configured models directory if set
+    ConfigData effective_config = config_manager.get_effective_config();
+    if (effective_config.models_directory) {
+        model_manager.set_models_directory(*effective_config.models_directory);
+    }
 
     // Handle special commands
     if (params.list_models) {
@@ -355,6 +364,10 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "%s: n_new_line = %d, no_context = %d\n", __func__, n_new_line, params.no_context);
         } else {
             fprintf(stderr, "%s: using VAD, will transcribe on speech activity\n", __func__);
+        }
+
+        if (params.print_colors) {
+            fprintf(stderr, "%s: color scheme: red (low confidence), yellow (medium), green (high confidence)\n", __func__);
         }
 
         fprintf(stderr, "\n");
@@ -497,7 +510,26 @@ int main(int argc, char ** argv) {
                     const char * text = whisper_full_get_segment_text(ctx, i);
 
                     if (params.no_timestamps) {
-                        printf("%s", text);
+                        if (params.print_colors) {
+                            // Print tokens with color based on confidence
+                            for (int j = 0; j < whisper_full_n_tokens(ctx, i); ++j) {
+                                if (params.print_special == false) {
+                                    const whisper_token id = whisper_full_get_token_id(ctx, i, j);
+                                    if (id >= whisper_token_eot(ctx)) {
+                                        continue;
+                                    }
+                                }
+
+                                const char * token_text = whisper_full_get_token_text(ctx, i, j);
+                                const float  token_p    = whisper_full_get_token_p   (ctx, i, j);
+
+                                const int col = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(token_p, 3)*float(k_colors.size()))));
+
+                                printf("%s%s%s", k_colors[col].c_str(), token_text, "\033[0m");
+                            }
+                        } else {
+                            printf("%s", text);
+                        }
                         fflush(stdout);
                         if (params.fname_out.length() > 0) {
                             fout << text;
@@ -505,16 +537,43 @@ int main(int argc, char ** argv) {
                     } else {
                         const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                         const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                        std::string output = "[" + to_timestamp(t0, false) + " --> " + to_timestamp(t1, false) + "]  " + text;
+                        
+                        std::string timestamp_prefix = "[" + to_timestamp(t0, false) + " --> " + to_timestamp(t1, false) + "]  ";
+                        printf("%s", timestamp_prefix.c_str());
+
+                        if (params.print_colors) {
+                            // Print tokens with color based on confidence
+                            for (int j = 0; j < whisper_full_n_tokens(ctx, i); ++j) {
+                                if (params.print_special == false) {
+                                    const whisper_token id = whisper_full_get_token_id(ctx, i, j);
+                                    if (id >= whisper_token_eot(ctx)) {
+                                        continue;
+                                    }
+                                }
+
+                                const char * token_text = whisper_full_get_token_text(ctx, i, j);
+                                const float  token_p    = whisper_full_get_token_p   (ctx, i, j);
+
+                                const int col = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(token_p, 3)*float(k_colors.size()))));
+
+                                printf("%s%s%s", k_colors[col].c_str(), token_text, "\033[0m");
+                            }
+                        } else {
+                            printf("%s", text);
+                        }
 
                         if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
-                            output += " [SPEAKER_TURN]";
+                            printf(" [SPEAKER_TURN]");
                         }
-                        output += "\n";
-
-                        printf("%s", output.c_str());
+                        printf("\n");
+                        
                         fflush(stdout);
                         if (params.fname_out.length() > 0) {
+                            std::string output = timestamp_prefix + text;
+                            if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
+                                output += " [SPEAKER_TURN]";
+                            }
+                            output += "\n";
                             fout << output;
                         }
                     }
