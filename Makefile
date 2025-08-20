@@ -1,4 +1,4 @@
-# Makefile for whisper-stream-coreml
+# Makefile for recognize
 # A macOS CLI for real-time speech recognition with CoreML support
 
 # Default target
@@ -7,7 +7,7 @@ all: build
 
 # Variables
 BUILD_DIR = build
-TARGET = whisper-stream-coreml
+TARGET = recognize
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
               -DWHISPER_COREML=ON \
@@ -116,6 +116,38 @@ run-vad: build
 list-models: build
 	@./$(TARGET) --list-models
 
+# Export examples
+.PHONY: run-export-txt
+run-export-txt: build
+	@MODEL=$${MODEL:-base.en}; \
+	echo "$(BLUE)Starting transcription with text export (model: $$MODEL)$(NC)"; \
+	./$(TARGET) -m $$MODEL --export --export-format txt
+
+.PHONY: run-export-md
+run-export-md: build
+	@MODEL=$${MODEL:-base.en}; \
+	echo "$(BLUE)Starting transcription with Markdown export (model: $$MODEL)$(NC)"; \
+	./$(TARGET) -m $$MODEL --export --export-format md
+
+.PHONY: run-export-json
+run-export-json: build
+	@MODEL=$${MODEL:-base.en}; \
+	echo "$(BLUE)Starting transcription with JSON export (model: $$MODEL)$(NC)"; \
+	./$(TARGET) -m $$MODEL --export --export-format json
+
+# Model management targets
+.PHONY: list-downloaded
+list-downloaded: build
+	@./$(TARGET) --list-downloaded
+
+.PHONY: show-storage
+show-storage: build
+	@./$(TARGET) --show-storage
+
+.PHONY: cleanup-models
+cleanup-models: build
+	@./$(TARGET) --cleanup
+
 # Configuration management
 .PHONY: config-list
 config-list: build
@@ -152,7 +184,7 @@ test: build
 # Show help
 .PHONY: help
 help:
-	@echo "$(BLUE)whisper-stream-coreml Makefile$(NC)"
+	@echo "$(BLUE)recognize Makefile$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Build Commands:$(NC)"
 	@echo "  make build        - Full build (configure + compile)"
@@ -169,6 +201,16 @@ help:
 	@echo "  make run-model MODEL=base.en - Run with specific model"
 	@echo "  make run-vad      - Run VAD mode (MODEL=base.en by default)"
 	@echo "  make list-models  - Show available models"
+	@echo ""
+	@echo "$(YELLOW)Export Examples:$(NC)"
+	@echo "  make run-export-txt  - Transcribe with text export"
+	@echo "  make run-export-md   - Transcribe with Markdown export"
+	@echo "  make run-export-json - Transcribe with JSON export"
+	@echo ""
+	@echo "$(YELLOW)Model Management:$(NC)"
+	@echo "  make list-downloaded  - Show downloaded models with details"
+	@echo "  make show-storage     - Show storage usage summary"
+	@echo "  make cleanup-models   - Remove orphaned model files"
 	@echo ""
 	@echo "$(YELLOW)Configuration:$(NC)"
 	@echo "  make config-list  - Show current configuration"
@@ -209,7 +251,7 @@ info:
 # Installation
 PREFIX ?= /usr/local
 INSTALL_DIR = $(PREFIX)/bin
-MODELS_DIR = ~/.whisper-stream-coreml/models
+MODELS_DIR = ~/.recognize/models
 
 .PHONY: install
 install: build
@@ -220,7 +262,7 @@ install: build
 	@mkdir -p $(MODELS_DIR)
 	@echo "$(GREEN)✓ Installed to $(INSTALL_DIR)/$(TARGET)$(NC)"
 	@echo "$(GREEN)✓ Models directory: $(MODELS_DIR)$(NC)"
-	@echo "$(YELLOW)Run: whisper-stream-coreml -h$(NC)"
+	@echo "$(YELLOW)Run: recognize -h$(NC)"
 
 .PHONY: uninstall
 uninstall:
@@ -250,18 +292,18 @@ install-user: build
 package: build
 	@echo "$(BLUE)Creating distribution package...$(NC)"
 	@rm -rf dist
-	@mkdir -p dist/whisper-stream-coreml
-	@cp $(TARGET) dist/whisper-stream-coreml/
-	@cp README.md TUTORIAL.md dist/whisper-stream-coreml/
-	@printf '#!/bin/bash\nset -e\necho "Installing whisper-stream-coreml..."\nsudo mkdir -p /usr/local/bin\nsudo cp whisper-stream-coreml /usr/local/bin/\nsudo chmod +x /usr/local/bin/whisper-stream-coreml\nmkdir -p ~/.whisper-stream-coreml/models\necho "✓ Installation complete!"\necho "✓ Run: whisper-stream-coreml -h"\n' > dist/whisper-stream-coreml/install.sh
-	@printf '#!/bin/bash\necho "Uninstalling whisper-stream-coreml..."\nsudo rm -f /usr/local/bin/whisper-stream-coreml\necho "✓ Uninstalled (models preserved in ~/.whisper-stream-coreml/)"\n' > dist/whisper-stream-coreml/uninstall.sh
-	@chmod +x dist/whisper-stream-coreml/install.sh
-	@chmod +x dist/whisper-stream-coreml/uninstall.sh
-	@cd dist && tar czf whisper-stream-coreml.tar.gz whisper-stream-coreml/
-	@echo "$(GREEN)✓ Package created: dist/whisper-stream-coreml.tar.gz$(NC)"
+	@mkdir -p dist/recognize
+	@cp $(TARGET) dist/recognize/
+	@cp README.md TUTORIAL.md dist/recognize/
+	@printf '#!/bin/bash\nset -e\necho "Installing recognize..."\nsudo mkdir -p /usr/local/bin\nsudo cp recognize /usr/local/bin/\nsudo chmod +x /usr/local/bin/recognize\nmkdir -p ~/.recognize/models\necho "✓ Installation complete!"\necho "✓ Run: recognize -h"\n' > dist/recognize/install.sh
+	@printf '#!/bin/bash\necho "Uninstalling recognize..."\nsudo rm -f /usr/local/bin/recognize\necho "✓ Uninstalled (models preserved in ~/.recognize/)"\n' > dist/recognize/uninstall.sh
+	@chmod +x dist/recognize/install.sh
+	@chmod +x dist/recognize/uninstall.sh
+	@cd dist && tar czf recognize.tar.gz recognize/
+	@echo "$(GREEN)✓ Package created: dist/recognize.tar.gz$(NC)"
 	@echo "$(YELLOW)To distribute:$(NC)"
-	@echo "  tar xzf whisper-stream-coreml.tar.gz"
-	@echo "  cd whisper-stream-coreml"
+	@echo "  tar xzf recognize.tar.gz"
+	@echo "  cd recognize"
 	@echo "  ./install.sh"
 
 # Development shortcuts

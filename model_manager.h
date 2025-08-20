@@ -33,7 +33,10 @@ public:
     
     // List available models
     void list_available_models();
+    void list_downloaded_models();
+    void show_storage_usage();
     std::vector<std::string> get_model_names();
+    std::vector<std::string> get_downloaded_models();
     
     // Interactive model selection
     std::string prompt_model_selection();
@@ -50,6 +53,11 @@ public:
     
     // Auto-resolve model (main entry point)
     std::string resolve_model(const std::string& model_arg, bool use_coreml);
+    
+    // Model management
+    bool delete_model(const std::string& model_name, bool confirm = true);
+    bool delete_all_models(bool confirm = true);
+    void cleanup_orphaned_files();
 
 private:
     std::map<std::string, ModelInfo> models_;

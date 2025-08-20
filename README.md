@@ -1,16 +1,19 @@
-# whisper-stream-coreml
+# recognize
 
 A macOS CLI for real-time speech recognition with CoreML acceleration, based on whisper.cpp's stream example.
 
 ## Features
 
-- Real-time speech transcription from microphone
-- CoreML acceleration for improved performance on macOS
-- Metal GPU backend support
-- Voice Activity Detection (VAD) 
-- Configurable audio parameters
-- Multiple output formats (timestamped, plain text, file output)
-- Comprehensive configuration system with JSON files and environment variables
+- **Real-time speech transcription** from microphone with low latency
+- **CoreML acceleration** for optimal performance on Apple Silicon Macs
+- **Metal GPU backend** support for enhanced processing
+- **Voice Activity Detection (VAD)** for efficient real-time processing
+- **Comprehensive model management** with automatic downloads and storage optimization
+- **Multi-format export system** supporting TXT, Markdown, JSON, CSV, SRT, VTT, XML
+- **Auto-copy functionality** with automatic clipboard integration
+- **Advanced configuration system** with JSON files, environment variables, and CLI options
+- **Professional subtitle generation** in SRT and VTT formats
+- **Session metadata tracking** with detailed performance metrics
 
 ## Requirements
 
@@ -44,7 +47,22 @@ make build         # Build the project
 make clean         # Clean build artifacts
 make test          # Test functionality
 make run           # Interactive model selection
+make run-vad       # Run in VAD mode (recommended)
 make list-models   # Show available models
+
+# Model Management
+make list-downloaded    # Show downloaded models with details
+make show-storage      # Show storage usage summary
+make cleanup-models    # Remove orphaned model files
+
+# Export Examples  
+make run-export-txt    # Transcribe with text export
+make run-export-md     # Transcribe with Markdown export
+make run-export-json   # Transcribe with JSON export
+
+# Configuration
+make config-list       # Show current configuration
+make config-reset      # Reset configuration to defaults
 ```
 
 ## Usage
@@ -63,24 +81,68 @@ make run-model MODEL=base.en
 
 ### List Available Models
 ```bash
-make list-models
+make list-models                    # Show all available models for download
+make list-downloaded                # Show downloaded models with details
+make show-storage                   # Show storage usage and cleanup suggestions
+```
+
+### Model Management
+```bash
+# Delete specific model
+recognize --delete-model base.en
+
+# Delete all downloaded models
+recognize --delete-all-models
+
+# Cleanup orphaned files
+recognize --cleanup
 ```
 
 ### VAD Mode (recommended)
 ```bash
-./whisper-stream-coreml -m base.en --step 0 --length 30000 -vth 0.6
+recognize -m base.en --step 0 --length 30000 -vth 0.6
 ```
 
 ### Continuous Mode
 ```bash
-./whisper-stream-coreml -m base.en --step 500 --length 5000
+recognize -m base.en --step 500 --length 5000
 ```
 
 ### With/Without CoreML
 ```bash
-./whisper-stream-coreml -m base.en --coreml     # Enable CoreML (default)
-./whisper-stream-coreml -m base.en --no-coreml  # Disable CoreML
+recognize -m base.en --coreml     # Enable CoreML (default)
+recognize -m base.en --no-coreml  # Disable CoreML
 ```
+
+### Export Transcriptions
+```bash
+# Export to text file (auto-generated filename)
+recognize -m base.en --export --export-format txt
+
+# Export to Markdown with custom filename
+recognize -m base.en --export --export-format md --export-file meeting.md
+
+# Export to JSON with confidence scores
+recognize -m base.en --export --export-format json --export-include-confidence
+
+# Export to SRT subtitle file
+recognize -m base.en --export --export-format srt
+
+# Export with all metadata and timestamps
+recognize -m base.en --export --export-format json
+
+# Export without metadata (clean output)
+recognize -m base.en --export --export-format txt --export-no-metadata --export-no-timestamps
+```
+
+### Supported Export Formats
+- **TXT**: Plain text with optional timestamps and metadata
+- **Markdown**: Formatted document with tables and styling
+- **JSON**: Structured data with segments, metadata, and confidence scores
+- **CSV**: Spreadsheet-compatible format with segment timing
+- **SRT**: Standard subtitle format for video players
+- **VTT**: WebVTT subtitle format for web players
+- **XML**: Structured markup with complete session details
 
 ## Command Line Options
 
@@ -90,6 +152,27 @@ make list-models
 - `-l, --language` - Source language (default: en)
 - `-t, --threads` - Number of threads (default: 4)
 - `--list-models` - List all available models for download
+
+### Model Management Options
+- `--list-downloaded` - Show downloaded models with sizes and paths
+- `--show-storage` - Show detailed storage usage breakdown
+- `--delete-model MODEL` - Delete a specific model
+- `--delete-all-models` - Delete all downloaded models
+- `--cleanup` - Remove orphaned model files
+
+### Export Options
+- `--export` - Enable transcription export when session ends
+- `--export-format FORMAT` - Export format: txt, md, json, csv, srt, vtt, xml
+- `--export-file FILE` - Export to specific file (default: auto-generated)
+- `--export-auto-filename` - Generate automatic filename with timestamp
+- `--export-no-metadata` - Exclude session metadata from export
+- `--export-no-timestamps` - Exclude timestamps from export
+- `--export-include-confidence` - Include confidence scores in export
+
+### Auto-Copy Options
+- `--auto-copy` - Automatically copy transcription to clipboard when session ends
+- `--auto-copy-max-duration N` - Max session duration in hours before skipping auto-copy
+- `--auto-copy-max-size N` - Max transcription size in bytes before skipping auto-copy
 
 ### Audio Options
 - `-c, --capture` - Audio capture device ID (default: -1 for default)
@@ -123,28 +206,28 @@ The CLI supports a comprehensive configuration system with multiple layers:
 1. **Command-line arguments** (highest priority)
 2. **Environment variables** 
 3. **Project config file** (`.whisper-config.json` or `config.json`)
-4. **User config file** (`~/.whisper-stream-coreml/config.json`)
+4. **User config file** (`~/.recognize/config.json`)
 
 ### Config Commands
 ```bash
 # Show current configuration (including system paths)
-./whisper-stream-coreml config list
+recognize config list
 
 # Set configuration values
-./whisper-stream-coreml config set model base.en
-./whisper-stream-coreml config set threads 8
-./whisper-stream-coreml config set use_coreml true
-./whisper-stream-coreml config set models_dir /custom/path/to/models
+recognize config set model base.en
+recognize config set threads 8
+recognize config set use_coreml true
+recognize config set models_dir /custom/path/to/models
 
 # Get configuration values
-./whisper-stream-coreml config get model
-./whisper-stream-coreml config get threads
+recognize config get model
+recognize config get threads
 
 # Remove configuration values
-./whisper-stream-coreml config unset model
+recognize config unset model
 
 # Reset all configuration to defaults
-./whisper-stream-coreml config reset
+recognize config reset
 ```
 
 ### Makefile Shortcuts
@@ -221,6 +304,14 @@ Configuration files use JSON format:
 - `auto_copy_max_duration` / `auto_copy_max_duration_hours` - Maximum session duration (hours) before skipping auto-copy (default: 2)
 - `auto_copy_max_size` / `auto_copy_max_size_bytes` - Maximum transcription size (bytes) before skipping auto-copy (default: 1MB)
 
+### Export Configuration
+- `export_enabled` - Enable/disable automatic export when session ends (default: false)
+- `export_format` - Default export format: txt, md, json, csv, srt, vtt, xml (default: txt)
+- `export_auto_filename` - Generate automatic filename with timestamp (default: true)
+- `export_include_metadata` - Include session metadata in exports (default: true)
+- `export_include_timestamps` - Include timestamps in exports (default: true)
+- `export_include_confidence` - Include confidence scores in exports (default: false)
+
 ## Performance Tips
 
 1. **Use CoreML**: Enabled by default for best performance on Apple Silicon
@@ -235,7 +326,7 @@ Configuration files use JSON format:
 
 ### Interactive Setup (Recommended for First Use)
 ```bash
-./whisper-stream-coreml
+recognize
 # 1. Shows available models
 # 2. Prompts for model selection
 # 3. Downloads automatically with progress
@@ -244,46 +335,88 @@ Configuration files use JSON format:
 
 ### Real-time transcription with VAD
 ```bash
-./whisper-stream-coreml -m base.en --step 0 --length 30000
+recognize -m base.en --step 0 --length 30000
 ```
 
 ### Continuous transcription every 500ms
 ```bash
-./whisper-stream-coreml -m base.en --step 500 --length 5000
+recognize -m base.en --step 500 --length 5000
 ```
 
 ### Save transcription to file
 ```bash
-./whisper-stream-coreml -m base.en -f transcript.txt
+recognize -m base.en -f transcript.txt
 ```
 
 ### Different language with translation
 ```bash
-./whisper-stream-coreml -m base -l es --translate
+recognize -m base -l es --translate
 ```
 
 ### Fast processing with tiny model
 ```bash
-./whisper-stream-coreml -m tiny.en --step 500
+recognize -m tiny.en --step 500
 ```
 
 ### Auto-copy transcription results
 ```bash
 # Enable auto-copy with default settings (2 hours max, 1MB max)
-./whisper-stream-coreml -m base.en --auto-copy
+recognize -m base.en --auto-copy
 
 # Enable auto-copy with custom limits
-./whisper-stream-coreml -m base.en --auto-copy --auto-copy-max-duration 1 --auto-copy-max-size 500000
+recognize -m base.en --auto-copy --auto-copy-max-duration 1 --auto-copy-max-size 500000
 
 # Configure via environment variables
 export WHISPER_AUTO_COPY=true
 export WHISPER_AUTO_COPY_MAX_DURATION=3
-./whisper-stream-coreml -m base.en
+recognize -m base.en
 
 # Configure via config file
-./whisper-stream-coreml config set auto_copy_enabled true
-./whisper-stream-coreml config set auto_copy_max_duration_hours 1
-./whisper-stream-coreml -m base.en
+recognize config set auto_copy_enabled true
+recognize config set auto_copy_max_duration_hours 1
+recognize -m base.en
+```
+
+### Model Management Examples
+```bash
+# List downloaded models with details
+recognize --list-downloaded
+
+# Show storage usage and get cleanup suggestions
+recognize --show-storage
+
+# Delete specific model to free space
+recognize --delete-model medium.en
+
+# Clean up orphaned files
+recognize --cleanup
+
+# Delete all models (nuclear option)
+recognize --delete-all-models
+```
+
+### Export Examples
+```bash
+# Export meeting transcript to Markdown
+recognize -m base.en --export --export-format md --export-file meeting_notes.md
+
+# Export with confidence scores for analysis
+recognize -m base.en --export --export-format json --export-include-confidence
+
+# Generate SRT subtitles for video
+recognize -m base.en --export --export-format srt --export-file video_subtitles.srt
+
+# Quick text export with auto-naming
+recognize -m base.en --export --export-format txt
+
+# Clean CSV export for data processing
+recognize -m base.en --export --export-format csv --export-no-metadata
+
+# Configure default export settings
+recognize config set export_enabled true
+recognize config set export_format json
+recognize config set export_include_confidence true
+recognize -m base.en  # Will automatically export to JSON with confidence scores
 ```
 
 ## Available Models

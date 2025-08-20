@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(whisper-stream-coreml)
+project(recognize)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,11 +35,12 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
 
 # Create executable
-set(TARGET whisper-stream-coreml)
+set(TARGET recognize)
 add_executable(${TARGET} 
     whisper-stream-coreml.cpp
     model_manager.cpp
     config_manager.cpp
+    export_manager.cpp
     ../../fixtures/whisper.cpp/examples/common.cpp
     ../../fixtures/whisper.cpp/examples/common-whisper.cpp
     ../../fixtures/whisper.cpp/examples/common-sdl.cpp

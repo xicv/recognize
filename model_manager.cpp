@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <thread>
 #include <chrono>
+#include <set>
 
 #ifdef __APPLE__
 #include <sys/stat.h>
@@ -15,8 +16,8 @@
 ModelManager::ModelManager() {
     // Use global models directory if installed system-wide
     const char* home = getenv("HOME");
-    if (home && std::filesystem::exists("/usr/local/bin/whisper-stream-coreml")) {
-        models_dir_ = std::string(home) + "/.whisper-stream-coreml/models";
+    if (home && std::filesystem::exists("/usr/local/bin/recognize")) {
+        models_dir_ = std::string(home) + "/.recognize/models";
     } else {
         models_dir_ = "models";
     }
@@ -213,6 +214,127 @@ std::vector<std::string> ModelManager::get_model_names() {
         names.push_back(name);
     }
     return names;
+}
+
+std::vector<std::string> ModelManager::get_downloaded_models() {
+    std::vector<std::string> downloaded;
+    for (const auto& [name, info] : models_) {
+        if (model_exists(name)) {
+            downloaded.push_back(name);
+        }
+    }
+    return downloaded;
+}
+
+void ModelManager::list_downloaded_models() {
+    auto downloaded = get_downloaded_models();
+    
+    if (downloaded.empty()) {
+        std::cout << "\n📁 No models downloaded yet.\n";
+        std::cout << "💡 Run 'recognize --list-models' to see available models for download.\n\n";
+        return;
+    }
+    
+    std::cout << "\n📁 Downloaded Models:\n\n";
+    
+    size_t total_size = 0;
+    
+    for (const auto& name : downloaded) {
+        ModelInfo info = get_model_info(name);
+        std::string model_path = get_model_path(name);
+        std::string coreml_path = get_coreml_model_path(name);
+        
+        // Calculate actual file sizes
+        size_t model_size = 0;
+        size_t coreml_size = 0;
+        
+        if (std::filesystem::exists(model_path)) {
+            model_size = std::filesystem::file_size(model_path);
+        }
+        
+        if (coreml_model_exists(name)) {
+            // For CoreML models, we need to calculate directory size
+            if (std::filesystem::exists(coreml_path) && std::filesystem::is_directory(coreml_path)) {
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(coreml_path)) {
+                    if (entry.is_regular_file()) {
+                        coreml_size += entry.file_size();
+                    }
+                }
+            }
+        }
+        
+        total_size += model_size + coreml_size;
+        
+        std::cout << "  ✅ " << name << " - " << info.description << "\n";
+        std::cout << "     📊 Size: " << (model_size / 1024 / 1024) << " MB";
+        if (coreml_size > 0) {
+            std::cout << " + " << (coreml_size / 1024 / 1024) << " MB CoreML";
+        }
+        std::cout << "\n";
+        std::cout << "     📂 Path: " << model_path << "\n";
+        if (coreml_size > 0) {
+            std::cout << "     🚀 CoreML: " << coreml_path << "\n";
+        }
+        std::cout << "\n";
+    }
+    
+    std::cout << "📊 Total storage used: " << (total_size / 1024 / 1024) << " MB\n\n";
+}
+
+void ModelManager::show_storage_usage() {
+    std::cout << "\n📊 Model Storage Usage:\n\n";
+    
+    if (!std::filesystem::exists(models_dir_)) {
+        std::cout << "📁 Models directory doesn't exist yet: " << models_dir_ << "\n\n";
+        return;
+    }
+    
+    size_t total_size = 0;
+    size_t model_files = 0;
+    size_t coreml_files = 0;
+    size_t other_files = 0;
+    
+    std::cout << "📂 Directory: " << models_dir_ << "\n\n";
+    
+    for (const auto& entry : std::filesystem::directory_iterator(models_dir_)) {
+        if (entry.is_regular_file()) {
+            size_t file_size = entry.file_size();
+            total_size += file_size;
+            
+            std::string filename = entry.path().filename().string();
+            if (filename.length() >= 4 && filename.substr(filename.length() - 4) == ".bin") {
+                model_files++;
+                std::cout << "  📄 " << filename << " - " << (file_size / 1024 / 1024) << " MB\n";
+            } else if (filename.length() >= 4 && filename.substr(filename.length() - 4) == ".zip") {
+                coreml_files++;
+                std::cout << "  📦 " << filename << " - " << (file_size / 1024 / 1024) << " MB (CoreML zip)\n";
+            } else {
+                other_files++;
+                std::cout << "  📄 " << filename << " - " << (file_size / 1024 / 1024) << " MB\n";
+            }
+        } else if (entry.is_directory()) {
+            std::string dirname = entry.path().filename().string();
+            if (dirname.length() >= 9 && dirname.substr(dirname.length() - 9) == ".mlmodelc") {
+                size_t dir_size = 0;
+                for (const auto& subentry : std::filesystem::recursive_directory_iterator(entry.path())) {
+                    if (subentry.is_regular_file()) {
+                        dir_size += subentry.file_size();
+                    }
+                }
+                total_size += dir_size;
+                coreml_files++;
+                std::cout << "  🚀 " << dirname << "/ - " << (dir_size / 1024 / 1024) << " MB (CoreML)\n";
+            }
+        }
+    }
+    
+    std::cout << "\n📈 Summary:\n";
+    std::cout << "  📄 Model files: " << model_files << "\n";
+    std::cout << "  🚀 CoreML files: " << coreml_files << "\n";
+    if (other_files > 0) {
+        std::cout << "  📁 Other files: " << other_files << "\n";
+    }
+    std::cout << "  📊 Total size: " << (total_size / 1024 / 1024) << " MB\n\n";
 }
 
 std::string ModelManager::prompt_model_selection() {
@@ -426,30 +548,30 @@ void ModelManager::show_usage_examples(const std::string& model_name) {
     std::cout << "\n🎉 Setup complete! Here's how to use your model:\n\n";
     
     std::cout << "🎤 Basic real-time transcription:\n";
-    std::cout << "   ./whisper-stream-coreml -m " << model_name << "\n\n";
+    std::cout << "   recognize -m " << model_name << "\n\n";
     
     std::cout << "🎯 VAD mode (recommended - only transcribes when you speak):\n";
-    std::cout << "   ./whisper-stream-coreml -m " << model_name << " --step 0 --length 30000\n\n";
+    std::cout << "   recognize -m " << model_name << " --step 0 --length 30000\n\n";
     
     std::cout << "⚡ Continuous mode (transcribes every 500ms):\n";
-    std::cout << "   ./whisper-stream-coreml -m " << model_name << " --step 500 --length 5000\n\n";
+    std::cout << "   recognize -m " << model_name << " --step 500 --length 5000\n\n";
     
     std::cout << "💾 Save transcription to file:\n";
-    std::cout << "   ./whisper-stream-coreml -m " << model_name << " -f transcript.txt\n\n";
+    std::cout << "   recognize -m " << model_name << " -f transcript.txt\n\n";
     
     std::cout << "🎛️  Use specific microphone:\n";
-    std::cout << "   ./whisper-stream-coreml -m " << model_name << " -c 3\n\n";
+    std::cout << "   recognize -m " << model_name << " -c 3\n\n";
     
     if (models_[model_name].multilingual) {
         std::cout << "🌍 Transcribe other languages:\n";
-        std::cout << "   ./whisper-stream-coreml -m " << model_name << " -l es  # Spanish\n";
-        std::cout << "   ./whisper-stream-coreml -m " << model_name << " -l fr  # French\n\n";
+        std::cout << "   recognize -m " << model_name << " -l es  # Spanish\n";
+        std::cout << "   recognize -m " << model_name << " -l fr  # French\n\n";
         
         std::cout << "🔄 Translate to English:\n";
-        std::cout << "   ./whisper-stream-coreml -m " << model_name << " -l es --translate\n\n";
+        std::cout << "   recognize -m " << model_name << " -l es --translate\n\n";
     }
     
-    std::cout << "📚 For more options: ./whisper-stream-coreml --help\n\n";
+    std::cout << "📚 For more options: recognize --help\n\n";
     std::cout << "🚀 Ready to start? Try the VAD mode command above!\n";
 }
 
@@ -503,4 +625,256 @@ std::string ModelManager::resolve_model(const std::string& model_arg, bool use_c
     
     // Model doesn't exist, use enhanced prompt with model selection option
     return prompt_model_not_found(model_name, use_coreml);
+}
+
+bool ModelManager::delete_model(const std::string& model_name, bool confirm) {
+    if (models_.find(model_name) == models_.end()) {
+        std::cout << "❌ Unknown model: " << model_name << "\n";
+        std::cout << "💡 Run 'recognize --list-models' to see available models.\n\n";
+        return false;
+    }
+    
+    if (!model_exists(model_name)) {
+        std::cout << "❌ Model '" << model_name << "' is not downloaded.\n\n";
+        return false;
+    }
+    
+    ModelInfo info = get_model_info(model_name);
+    std::string model_path = get_model_path(model_name);
+    std::string coreml_path = get_coreml_model_path(model_name);
+    bool has_coreml = coreml_model_exists(model_name);
+    
+    // Calculate total size
+    size_t total_size = 0;
+    if (std::filesystem::exists(model_path)) {
+        total_size += std::filesystem::file_size(model_path);
+    }
+    if (has_coreml && std::filesystem::exists(coreml_path)) {
+        if (std::filesystem::is_directory(coreml_path)) {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(coreml_path)) {
+                if (entry.is_regular_file()) {
+                    total_size += entry.file_size();
+                }
+            }
+        }
+    }
+    
+    if (confirm) {
+        std::cout << "\n🗑️  Delete Model: " << model_name << "\n";
+        std::cout << "📄 " << info.description << "\n";
+        std::cout << "📁 Size: " << (total_size / 1024 / 1024) << " MB\n";
+        std::cout << "📂 Path: " << model_path << "\n";
+        if (has_coreml) {
+            std::cout << "🚀 CoreML: " << coreml_path << "\n";
+        }
+        std::cout << "\n⚠️  This action cannot be undone.\n";
+        std::cout << "Are you sure you want to delete this model? [y/N]: ";
+        
+        std::string response;
+        std::getline(std::cin, response);
+        
+        if (response != "y" && response != "Y") {
+            std::cout << "❌ Deletion cancelled.\n\n";
+            return false;
+        }
+    }
+    
+    bool success = true;
+    
+    // Delete main model file
+    try {
+        if (std::filesystem::exists(model_path)) {
+            std::filesystem::remove(model_path);
+            std::cout << "✅ Deleted: " << model_path << "\n";
+        }
+    } catch (const std::exception& e) {
+        std::cout << "❌ Failed to delete " << model_path << ": " << e.what() << "\n";
+        success = false;
+    }
+    
+    // Delete CoreML model
+    if (has_coreml) {
+        try {
+            if (std::filesystem::exists(coreml_path)) {
+                if (std::filesystem::is_directory(coreml_path)) {
+                    std::filesystem::remove_all(coreml_path);
+                } else {
+                    std::filesystem::remove(coreml_path);
+                }
+                std::cout << "✅ Deleted CoreML: " << coreml_path << "\n";
+            }
+        } catch (const std::exception& e) {
+            std::cout << "❌ Failed to delete CoreML " << coreml_path << ": " << e.what() << "\n";
+            success = false;
+        }
+    }
+    
+    // Also clean up any zip files
+    std::string zip_path = models_dir_ + "/" + info.coreml_filename + ".zip";
+    if (std::filesystem::exists(zip_path)) {
+        try {
+            std::filesystem::remove(zip_path);
+            std::cout << "✅ Deleted zip: " << zip_path << "\n";
+        } catch (const std::exception& e) {
+            std::cout << "❌ Failed to delete zip " << zip_path << ": " << e.what() << "\n";
+        }
+    }
+    
+    if (success) {
+        std::cout << "✅ Model '" << model_name << "' deleted successfully.\n";
+        std::cout << "💾 Freed " << (total_size / 1024 / 1024) << " MB of storage.\n\n";
+    }
+    
+    return success;
+}
+
+bool ModelManager::delete_all_models(bool confirm) {
+    auto downloaded = get_downloaded_models();
+    
+    if (downloaded.empty()) {
+        std::cout << "📁 No models to delete.\n\n";
+        return true;
+    }
+    
+    if (confirm) {
+        std::cout << "\n🗑️  Delete All Models\n\n";
+        std::cout << "This will delete the following models:\n";
+        
+        size_t total_size = 0;
+        for (const auto& name : downloaded) {
+            ModelInfo info = get_model_info(name);
+            std::string model_path = get_model_path(name);
+            std::string coreml_path = get_coreml_model_path(name);
+            
+            size_t model_size = 0;
+            if (std::filesystem::exists(model_path)) {
+                model_size += std::filesystem::file_size(model_path);
+            }
+            if (coreml_model_exists(name) && std::filesystem::exists(coreml_path)) {
+                if (std::filesystem::is_directory(coreml_path)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(coreml_path)) {
+                        if (entry.is_regular_file()) {
+                            model_size += entry.file_size();
+                        }
+                    }
+                }
+            }
+            
+            total_size += model_size;
+            std::cout << "  ❌ " << name << " - " << (model_size / 1024 / 1024) << " MB\n";
+        }
+        
+        std::cout << "\n📊 Total size: " << (total_size / 1024 / 1024) << " MB\n";
+        std::cout << "⚠️  This action cannot be undone.\n";
+        std::cout << "Are you sure you want to delete ALL models? [y/N]: ";
+        
+        std::string response;
+        std::getline(std::cin, response);
+        
+        if (response != "y" && response != "Y") {
+            std::cout << "❌ Deletion cancelled.\n\n";
+            return false;
+        }
+    }
+    
+    bool all_success = true;
+    for (const auto& name : downloaded) {
+        if (!delete_model(name, false)) {  // Skip individual confirmations
+            all_success = false;
+        }
+    }
+    
+    if (all_success) {
+        std::cout << "\n✅ All models deleted successfully.\n\n";
+    } else {
+        std::cout << "\n⚠️  Some models could not be deleted.\n\n";
+    }
+    
+    return all_success;
+}
+
+void ModelManager::cleanup_orphaned_files() {
+    std::cout << "\n🧹 Cleaning up orphaned files...\n\n";
+    
+    if (!std::filesystem::exists(models_dir_)) {
+        std::cout << "📁 Models directory doesn't exist.\n\n";
+        return;
+    }
+    
+    std::vector<std::string> orphaned_files;
+    std::set<std::string> known_files;
+    
+    // Collect all known filenames
+    for (const auto& [name, info] : models_) {
+        known_files.insert(info.filename);
+        known_files.insert(info.coreml_filename);
+        known_files.insert(info.coreml_filename + ".zip");
+    }
+    
+    // Find orphaned files
+    for (const auto& entry : std::filesystem::directory_iterator(models_dir_)) {
+        std::string filename = entry.path().filename().string();
+        
+        if (entry.is_regular_file()) {
+            if (known_files.find(filename) == known_files.end()) {
+                orphaned_files.push_back(entry.path().string());
+            }
+        } else if (entry.is_directory()) {
+            if (known_files.find(filename) == known_files.end()) {
+                orphaned_files.push_back(entry.path().string());
+            }
+        }
+    }
+    
+    if (orphaned_files.empty()) {
+        std::cout << "✅ No orphaned files found.\n\n";
+        return;
+    }
+    
+    std::cout << "🗑️  Found orphaned files:\n";
+    size_t total_size = 0;
+    for (const auto& file_path : orphaned_files) {
+        if (std::filesystem::is_regular_file(file_path)) {
+            size_t size = std::filesystem::file_size(file_path);
+            total_size += size;
+            std::cout << "  📄 " << std::filesystem::path(file_path).filename().string() 
+                      << " - " << (size / 1024 / 1024) << " MB\n";
+        } else if (std::filesystem::is_directory(file_path)) {
+            size_t size = 0;
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(file_path)) {
+                if (entry.is_regular_file()) {
+                    size += entry.file_size();
+                }
+            }
+            total_size += size;
+            std::cout << "  📁 " << std::filesystem::path(file_path).filename().string() 
+                      << "/ - " << (size / 1024 / 1024) << " MB\n";
+        }
+    }
+    
+    std::cout << "\n📊 Total size: " << (total_size / 1024 / 1024) << " MB\n";
+    std::cout << "Delete these orphaned files? [y/N]: ";
+    
+    std::string response;
+    std::getline(std::cin, response);
+    
+    if (response != "y" && response != "Y") {
+        std::cout << "❌ Cleanup cancelled.\n\n";
+        return;
+    }
+    
+    for (const auto& file_path : orphaned_files) {
+        try {
+            if (std::filesystem::is_directory(file_path)) {
+                std::filesystem::remove_all(file_path);
+            } else {
+                std::filesystem::remove(file_path);
+            }
+            std::cout << "✅ Deleted: " << std::filesystem::path(file_path).filename().string() << "\n";
+        } catch (const std::exception& e) {
+            std::cout << "❌ Failed to delete " << file_path << ": " << e.what() << "\n";
+        }
+    }
+    
+    std::cout << "\n✅ Cleanup completed.\n\n";
 }

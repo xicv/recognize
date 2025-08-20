@@ -1,5 +1,5 @@
 #!/bin/bash
-# Standalone installer for whisper-stream-coreml
+# Standalone installer for recognize
 # Downloads and installs the CLI system-wide
 
 set -e
@@ -13,11 +13,11 @@ NC='\033[0m' # No Color
 
 # Configuration
 INSTALL_DIR="/usr/local/bin"
-MODELS_DIR="$HOME/.whisper-stream-coreml/models"
-BINARY_NAME="whisper-stream-coreml"
-TEMP_DIR="/tmp/whisper-stream-coreml-install"
+MODELS_DIR="$HOME/.recognize/models"
+BINARY_NAME="recognize"
+TEMP_DIR="/tmp/recognize-install"
 
-echo -e "${BLUE}whisper-stream-coreml Installer${NC}"
+echo -e "${BLUE}recognize Installer${NC}"
 echo -e "${BLUE}================================${NC}"
 echo ""
 
@@ -73,7 +73,7 @@ else
 fi
 
 # Build the application
-echo -e "${BLUE}Building whisper-stream-coreml...${NC}"
+echo -e "${BLUE}Building recognize...${NC}"
 if command -v make &> /dev/null && [[ -f "Makefile" ]]; then
     make build
 elif [[ -f "build.sh" ]]; then

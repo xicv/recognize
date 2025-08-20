@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Build script for whisper-stream-coreml
+# Build script for recognize
 # Requires SDL2 and whisper.cpp dependencies
 
 set -e
@@ -11,7 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}Building whisper-stream-coreml for macOS with CoreML support...${NC}"
+echo -e "${GREEN}Building recognize for macOS with CoreML support...${NC}"
 
 # Check if we're on macOS
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -58,21 +58,21 @@ echo -e "${YELLOW}Building...${NC}"
 make -j$(sysctl -n hw.ncpu)
 
 # Check if build succeeded
-if [ -f "whisper-stream-coreml" ]; then
+if [ -f "recognize" ]; then
     echo -e "${GREEN}Build successful!${NC}"
-    echo -e "${GREEN}Executable: $(pwd)/whisper-stream-coreml${NC}"
+    echo -e "${GREEN}Executable: $(pwd)/recognize${NC}"
     
     # Copy to parent directory for convenience
-    cp whisper-stream-coreml ../
-    echo -e "${GREEN}Copied to: $(dirname $(pwd))/whisper-stream-coreml${NC}"
+    cp recognize ../
+    echo -e "${GREEN}Copied to: $(dirname $(pwd))/recognize${NC}"
     
     # Make it executable
-    chmod +x ../whisper-stream-coreml
+    chmod +x ../recognize
     
     echo -e "${YELLOW}Usage examples:${NC}"
-    echo "./whisper-stream-coreml -m path/to/model.bin"
-    echo "./whisper-stream-coreml -m path/to/model.bin --coreml"
-    echo "./whisper-stream-coreml -m path/to/model.bin --no-coreml --step 500"
+    echo "recognize -m base.en"
+    echo "recognize -m base.en --coreml"
+    echo "recognize -m base.en --no-coreml --step 500"
 else
     echo -e "${RED}Build failed!${NC}"
     exit 1

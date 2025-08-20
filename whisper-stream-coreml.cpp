@@ -7,6 +7,7 @@
 #include "whisper.h"
 #include "model_manager.h"
 #include "config_manager.h"
+#include "export_manager.h"
 
 #include <chrono>
 #include <cstdio>
@@ -51,10 +52,27 @@ struct whisper_params {
     std::string fname_out;
     bool list_models = false; // Flag to list available models
     
+    // Model management options
+    bool list_downloaded = false;
+    bool show_storage = false;
+    bool delete_model_flag = false;
+    bool delete_all_models_flag = false;
+    bool cleanup_models = false;
+    std::string model_to_delete = "";
+    
     // Auto-copy settings
     bool auto_copy_enabled = false;
     int32_t auto_copy_max_duration_hours = 2; // Default: 2 hours
     int32_t auto_copy_max_size_bytes = 1024 * 1024; // Default: 1MB
+    
+    // Export settings
+    bool export_enabled = false;
+    std::string export_format = "txt";
+    std::string export_file = "";
+    bool export_auto_filename = true;
+    bool export_include_metadata = true;
+    bool export_include_timestamps = true;
+    bool export_include_confidence = false;
 };
 
 // Auto-copy functionality
@@ -65,6 +83,23 @@ struct AutoCopySession {
     bool has_been_copied = false;
     
     AutoCopySession() {
+        // Generate a unique session ID
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(100000, 999999);
+        session_id = std::to_string(dis(gen));
+        start_time = std::chrono::high_resolution_clock::now();
+    }
+};
+
+// Export session functionality
+struct ExportSession {
+    std::string session_id;
+    std::chrono::high_resolution_clock::time_point start_time;
+    std::vector<TranscriptionSegment> segments;
+    SessionMetadata metadata;
+    
+    ExportSession() {
         // Generate a unique session ID
         std::random_device rd;
         std::mt19937 gen(rd());
@@ -160,6 +195,73 @@ void perform_auto_copy(AutoCopySession& session, const whisper_params& params) {
     }
 }
 
+void perform_export(ExportSession& session, const whisper_params& params) {
+    if (!params.export_enabled || session.segments.empty()) {
+        return;
+    }
+    
+    // Validate export format
+    auto supported_formats = ExportManager::get_supported_formats();
+    bool format_valid = false;
+    for (const auto& format : supported_formats) {
+        if (format == params.export_format) {
+            format_valid = true;
+            break;
+        }
+    }
+    
+    if (!format_valid) {
+        printf("Export failed: unsupported format '%s'. Supported formats: ", params.export_format.c_str());
+        for (size_t i = 0; i < supported_formats.size(); ++i) {
+            printf("%s", supported_formats[i].c_str());
+            if (i < supported_formats.size() - 1) printf(", ");
+        }
+        printf("\n");
+        return;
+    }
+    
+    // Setup export manager
+    ExportManager export_manager;
+    
+    // Set export format
+    ExportFormat format = ExportManager::extension_to_format("." + params.export_format);
+    export_manager.set_format(format);
+    
+    // Set output file
+    if (!params.export_file.empty()) {
+        export_manager.set_output_file(params.export_file);
+    }
+    export_manager.set_auto_filename(params.export_auto_filename);
+    
+    // Set export options
+    export_manager.set_include_metadata(params.export_include_metadata);
+    export_manager.set_include_timestamps(params.export_include_timestamps);
+    export_manager.set_include_confidence(params.export_include_confidence);
+    
+    // Add all segments
+    for (const auto& segment : session.segments) {
+        export_manager.add_segment(segment);
+    }
+    
+    // Set session metadata
+    session.metadata.end_time = std::chrono::system_clock::now();
+    session.metadata.total_segments = session.segments.size();
+    
+    if (!session.segments.empty()) {
+        int64_t total_duration = session.segments.back().end_time_ms - session.segments.front().start_time_ms;
+        session.metadata.total_duration_seconds = total_duration / 1000.0;
+    }
+    
+    export_manager.set_metadata(session.metadata);
+    
+    // Perform export
+    if (export_manager.export_transcription()) {
+        printf("Export completed successfully.\n");
+    } else {
+        printf("Export failed.\n");
+    }
+}
+
 void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
 static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
@@ -198,11 +300,25 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-cm"   || arg == "--coreml-model")  { params.coreml_model  = argv[++i]; }
         // Model management options
         else if (arg == "--list-models")                     { params.list_models   = true; }
+        else if (arg == "--list-downloaded")                 { params.list_downloaded = true; }
+        else if (arg == "--show-storage")                    { params.show_storage  = true; }
+        else if (arg == "--delete-model")                    { params.delete_model_flag = true; params.model_to_delete = argv[++i]; }
+        else if (arg == "--delete-all-models")               { params.delete_all_models_flag = true; }
+        else if (arg == "--cleanup")                         { params.cleanup_models = true; }
         // Auto-copy options
         else if (arg == "--auto-copy")                       { params.auto_copy_enabled = true; }
         else if (arg == "--no-auto-copy")                    { params.auto_copy_enabled = false; }
         else if (arg == "--auto-copy-max-duration")          { params.auto_copy_max_duration_hours = std::stoi(argv[++i]); }
         else if (arg == "--auto-copy-max-size")              { params.auto_copy_max_size_bytes = std::stoi(argv[++i]); }
+        // Export options
+        else if (arg == "--export")                          { params.export_enabled = true; }
+        else if (arg == "--no-export")                       { params.export_enabled = false; }
+        else if (arg == "--export-format")                   { params.export_format = argv[++i]; }
+        else if (arg == "--export-file")                     { params.export_file = argv[++i]; params.export_auto_filename = false; }
+        else if (arg == "--export-auto-filename")            { params.export_auto_filename = true; }
+        else if (arg == "--export-no-metadata")              { params.export_include_metadata = false; }
+        else if (arg == "--export-no-timestamps")            { params.export_include_timestamps = false; }
+        else if (arg == "--export-include-confidence")       { params.export_include_confidence = true; }
         // Config management options
         else if (arg == "config") {
             if (i + 1 < argc) {
@@ -309,8 +425,23 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "            --auto-copy-max-duration N [%-7d] max session duration in hours before skipping auto-copy\n", params.auto_copy_max_duration_hours);
     fprintf(stderr, "            --auto-copy-max-size N     [%-7d] max transcription size in bytes before skipping auto-copy\n", params.auto_copy_max_size_bytes);
     fprintf(stderr, "\n");
+    fprintf(stderr, "export options:\n");
+    fprintf(stderr, "            --export        [%-7s] enable transcription export when session ends\n", params.export_enabled ? "true" : "false");
+    fprintf(stderr, "            --no-export     [%-7s] disable transcription export\n",                params.export_enabled ? "false" : "true");
+    fprintf(stderr, "            --export-format FORMAT [%-7s] export format: txt, md, json, csv, srt, vtt, xml\n", params.export_format.c_str());
+    fprintf(stderr, "            --export-file FILE      [%-7s] export to specific file (default: auto-generated)\n", params.export_file.c_str());
+    fprintf(stderr, "            --export-auto-filename  [%-7s] generate automatic filename\n",          params.export_auto_filename ? "true" : "false");
+    fprintf(stderr, "            --export-no-metadata    [%-7s] exclude session metadata from export\n", params.export_include_metadata ? "false" : "true");
+    fprintf(stderr, "            --export-no-timestamps  [%-7s] exclude timestamps from export\n",     params.export_include_timestamps ? "false" : "true");
+    fprintf(stderr, "            --export-include-confidence [%-7s] include confidence scores in export\n", params.export_include_confidence ? "true" : "false");
+    fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
-    fprintf(stderr, "            --list-models   list available models for download\n");
+    fprintf(stderr, "            --list-models      list available models for download\n");
+    fprintf(stderr, "            --list-downloaded  list downloaded models with sizes and paths\n");
+    fprintf(stderr, "            --show-storage     show detailed storage usage\n");
+    fprintf(stderr, "            --delete-model MODEL  delete a specific model\n");
+    fprintf(stderr, "            --delete-all-models    delete all downloaded models\n");
+    fprintf(stderr, "            --cleanup          remove orphaned model files\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "configuration:\n");
     fprintf(stderr, "  config list                 show current configuration\n");
@@ -324,8 +455,16 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  %s -m base.en                        # download and use base.en model\n", argv[0]);
     fprintf(stderr, "  %s -m tiny.en --step 0 --length 30000 # VAD mode with tiny model\n", argv[0]);
     fprintf(stderr, "  %s --list-models                      # show available models\n", argv[0]);
+    fprintf(stderr, "  %s --list-downloaded                  # show downloaded models\n", argv[0]);
+    fprintf(stderr, "  %s --show-storage                     # show storage usage\n", argv[0]);
+    fprintf(stderr, "  %s --delete-model base.en             # delete specific model\n", argv[0]);
+    fprintf(stderr, "  %s --cleanup                          # remove orphaned files\n", argv[0]);
+    fprintf(stderr, "  %s --export --export-format json      # export transcription to JSON\n", argv[0]);
+    fprintf(stderr, "  %s --export --export-format md --export-file meeting.md # export to Markdown\n", argv[0]);
+    fprintf(stderr, "  %s --export --export-format srt       # generate SRT subtitles\n", argv[0]);
+    fprintf(stderr, "  %s --auto-copy                        # auto-copy to clipboard\n", argv[0]);
     fprintf(stderr, "  %s config set model base.en           # set default model\n", argv[0]);
-    fprintf(stderr, "  %s config set threads 8               # set default thread count\n", argv[0]);
+    fprintf(stderr, "  %s config set export_enabled true     # enable auto-export\n", argv[0]);
     fprintf(stderr, "  %s config list                        # show current config\n", argv[0]);
     fprintf(stderr, "\n");
 }
@@ -356,6 +495,31 @@ int main(int argc, char ** argv) {
     // Handle special commands
     if (params.list_models) {
         model_manager.list_available_models();
+        return 0;
+    }
+    
+    if (params.list_downloaded) {
+        model_manager.list_downloaded_models();
+        return 0;
+    }
+    
+    if (params.show_storage) {
+        model_manager.show_storage_usage();
+        return 0;
+    }
+    
+    if (params.delete_model_flag) {
+        bool success = model_manager.delete_model(params.model_to_delete, true);
+        return success ? 0 : 1;
+    }
+    
+    if (params.delete_all_models_flag) {
+        bool success = model_manager.delete_all_models(true);
+        return success ? 0 : 1;
+    }
+    
+    if (params.cleanup_models) {
+        model_manager.cleanup_orphaned_files();
         return 0;
     }
 
@@ -527,6 +691,27 @@ int main(int argc, char ** argv) {
                params.auto_copy_max_duration_hours, 
                params.auto_copy_max_size_bytes);
     }
+    
+    // Initialize export session
+    ExportSession export_session;
+    if (params.export_enabled) {
+        printf("Export enabled (Session ID: %s, Format: %s, File: %s)\n", 
+               export_session.session_id.c_str(),
+               params.export_format.c_str(),
+               params.export_auto_filename ? "auto-generated" : params.export_file.c_str());
+        
+        // Setup session metadata
+        export_session.metadata.session_id = export_session.session_id;
+        export_session.metadata.start_time = std::chrono::system_clock::now();
+        export_session.metadata.model_name = params.model;
+        export_session.metadata.language = params.language;
+        export_session.metadata.coreml_enabled = params.use_coreml;
+        export_session.metadata.thread_count = params.n_threads;
+        export_session.metadata.vad_threshold = params.vad_thold;
+        export_session.metadata.step_ms = params.step_ms;
+        export_session.metadata.length_ms = params.length_ms;
+        export_session.metadata.version = "recognize-1.0.0";
+    }
 
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
@@ -670,6 +855,27 @@ int main(int argc, char ** argv) {
                         if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                             auto_copy_session.transcription_buffer << text;
                         }
+                        
+                        // Add to export session (for plain text mode)
+                        if (params.export_enabled) {
+                            // Calculate average confidence
+                            float avg_confidence = 0.0f;
+                            int token_count = whisper_full_n_tokens(ctx, i);
+                            if (token_count > 0) {
+                                for (int j = 0; j < token_count; ++j) {
+                                    avg_confidence += whisper_full_get_token_p(ctx, i, j);
+                                }
+                                avg_confidence /= token_count;
+                            }
+                            
+                            // Create segment without timestamps for no_timestamps mode
+                            export_session.segments.emplace_back(
+                                0, 0, // No timestamps in this mode
+                                std::string(text),
+                                avg_confidence,
+                                false // No speaker turn detection in plain mode
+                            );
+                        }
                     } else {
                         const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                         const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
@@ -721,6 +927,28 @@ int main(int argc, char ** argv) {
                             }
                             auto_copy_session.transcription_buffer << "\n";
                         }
+                        
+                        // Add to export session (with timestamps for timestamped mode)
+                        if (params.export_enabled) {
+                            // Calculate average confidence
+                            float avg_confidence = 0.0f;
+                            int token_count = whisper_full_n_tokens(ctx, i);
+                            if (token_count > 0) {
+                                for (int j = 0; j < token_count; ++j) {
+                                    avg_confidence += whisper_full_get_token_p(ctx, i, j);
+                                }
+                                avg_confidence /= token_count;
+                            }
+                            
+                            // Create segment with timestamps and speaker turn info
+                            export_session.segments.emplace_back(
+                                t0 / 10, // Convert to milliseconds
+                                t1 / 10, // Convert to milliseconds
+                                std::string(text),
+                                avg_confidence,
+                                whisper_full_get_segment_speaker_turn_next(ctx, i)
+                            );
+                        }
                     }
                 }
 
@@ -759,6 +987,11 @@ int main(int argc, char ** argv) {
     // Perform auto-copy when session ends
     if (params.auto_copy_enabled) {
         perform_auto_copy(auto_copy_session, params);
+    }
+    
+    // Perform export when session ends
+    if (params.export_enabled) {
+        perform_export(export_session, params);
     }
     
     whisper_print_timings(ctx);

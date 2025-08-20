@@ -1,11 +1,11 @@
-# Homebrew Formula for whisper-stream-coreml
-# Save as: /opt/homebrew/Library/Taps/homebrew/homebrew-core/Formula/whisper-stream-coreml.rb
+# Homebrew Formula for recognize
+# Save as: /opt/homebrew/Library/Taps/homebrew/homebrew-core/Formula/recognize.rb
 # Or create a custom tap
 
-class WhisperStreamCoreml < Formula
+class Recognize < Formula
   desc "Real-time speech recognition CLI with CoreML acceleration for macOS"
-  homepage "https://github.com/your-username/whisper-stream-coreml"
-  url "https://github.com/your-username/whisper-stream-coreml/archive/v1.0.0.tar.gz"
+  homepage "https://github.com/your-username/recognize"
+  url "https://github.com/your-username/recognize/archive/v1.0.0.tar.gz"
   sha256 "YOUR_SHA256_HERE"
   license "MIT"
 
@@ -26,34 +26,34 @@ class WhisperStreamCoreml < Formula
       system "make", "-j#{ENV.make_jobs}"
       
       # Install binary
-      bin.install "whisper-stream-coreml"
+      bin.install "recognize"
     end
 
     # Create models directory
-    (var/"whisper-stream-coreml/models").mkpath
+    (var/"recognize/models").mkpath
   end
 
   def post_install
     # Create user models directory
-    (Dir.home/".whisper-stream-coreml/models").mkpath
+    (Dir.home/".recognize/models").mkpath
   end
 
   test do
     # Test that the binary runs and shows help
-    system "#{bin}/whisper-stream-coreml", "--help"
+    system "#{bin}/recognize", "--help"
   end
 
   def caveats
     <<~EOS
       Models are downloaded automatically when needed.
-      Models directory: ~/.whisper-stream-coreml/models
+      Models directory: ~/.recognize/models
 
       Quick start:
-        whisper-stream-coreml                    # Interactive setup
-        whisper-stream-coreml -m base.en         # Use specific model
-        whisper-stream-coreml --list-models      # Show available models
+        recognize                    # Interactive setup
+        recognize -m base.en         # Use specific model
+        recognize --list-models      # Show available models
 
-      For more information, see: whisper-stream-coreml -h
+      For more information, see: recognize -h
     EOS
   end
 end
