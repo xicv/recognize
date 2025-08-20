@@ -8,6 +8,8 @@ all: build
 # Variables
 BUILD_DIR = build
 TARGET = recognize
+HOTKEY_APP = RecognizeHotkey
+HOTKEY_APP_NAME = Recognize
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
               -DWHISPER_COREML=ON \
@@ -226,6 +228,7 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Development:$(NC)"
 	@echo "  make test         - Test basic functionality"
+	@echo "  make stop         - Stop all running dev apps"
 	@echo "  make help         - Show this help"
 	@echo ""
 	@echo "$(YELLOW)Examples:$(NC)"
@@ -312,3 +315,12 @@ dev: fresh run
 
 .PHONY: quick
 quick: rebuild run
+
+.PHONY: stop
+stop:
+	@echo "$(BLUE)Stopping all development apps...$(NC)"
+	@pkill -f "Recognize.app" || true
+	@pkill -f "recognize" || true
+	@echo "$(GREEN)✓ All apps stopped$(NC)"
+
+# Note: GUI app functionality has been removed - CLI only

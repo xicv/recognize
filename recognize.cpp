@@ -19,6 +19,48 @@
 #include <sstream>
 #include <cstdlib>
 #include <random>
+#include <csignal>
+#include <atomic>
+#include <termios.h>
+#include <unistd.h>
+
+// Global state for signal handling
+std::atomic<bool> g_interrupt_received(false);
+std::atomic<bool> g_is_recording(false);
+
+// Signal handler for graceful shutdown
+void signal_handler(int signal) {
+    if (signal == SIGINT) {
+        if (g_is_recording.load()) {
+            // If recording, ask for confirmation
+            std::cout << "\n\n⚠️  Recording in progress! Are you sure you want to quit? (y/N): " << std::flush;
+            
+            // Set terminal to raw mode to read single character
+            struct termios old_termios, new_termios;
+            tcgetattr(STDIN_FILENO, &old_termios);
+            new_termios = old_termios;
+            new_termios.c_lflag &= ~(ICANON | ECHO);
+            tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+            
+            char c = getchar();
+            
+            // Restore terminal mode
+            tcsetattr(STDIN_FILENO, TCSANOW, &old_termios);
+            
+            if (c == 'y' || c == 'Y') {
+                std::cout << "\n🛑 Stopping recording and exiting...\n" << std::endl;
+                g_interrupt_received.store(true);
+            } else {
+                std::cout << "\n▶️  Continuing recording...\n" << std::endl;
+                return;
+            }
+        } else {
+            // Not recording, exit immediately
+            std::cout << "\n🛑 Exiting...\n" << std::endl;
+            g_interrupt_received.store(true);
+        }
+    }
+}
 
 // Command-line parameters with CoreML specific options
 struct whisper_params {
@@ -472,6 +514,9 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
 int main(int argc, char ** argv) {
     ggml_backend_load_all();
 
+    // Register signal handler for graceful shutdown
+    signal(SIGINT, signal_handler);
+
     whisper_params params;
 
     // Load configuration before parsing command line
@@ -579,6 +624,9 @@ int main(int argc, char ** argv) {
     }
 
     audio.resume();
+    
+    // Set recording state for signal handler
+    g_is_recording.store(true);
 
     // Whisper init with CoreML support
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1){
@@ -717,13 +765,13 @@ int main(int argc, char ** argv) {
     const auto t_start = t_last;
 
     // Main audio processing loop
-    while (is_running) {
+    while (is_running && !g_interrupt_received.load()) {
         if (params.save_audio) {
             wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
         }
         
         is_running = sdl_poll_events();
-        if (!is_running) {
+        if (!is_running || g_interrupt_received.load()) {
             break;
         }
 
@@ -731,7 +779,7 @@ int main(int argc, char ** argv) {
         if (!use_vad) {
             while (true) {
                 is_running = sdl_poll_events();
-                if (!is_running) {
+                if (!is_running || g_interrupt_received.load()) {
                     break;
                 }
                 
@@ -993,6 +1041,9 @@ int main(int argc, char ** argv) {
     if (params.export_enabled) {
         perform_export(export_session, params);
     }
+    
+    // Clear recording state
+    g_is_recording.store(false);
     
     whisper_print_timings(ctx);
     whisper_free(ctx);

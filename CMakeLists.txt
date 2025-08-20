@@ -37,7 +37,7 @@ pkg_check_modules(SDL2 REQUIRED sdl2)
 # Create executable
 set(TARGET recognize)
 add_executable(${TARGET} 
-    whisper-stream-coreml.cpp
+    recognize.cpp
     model_manager.cpp
     config_manager.cpp
     export_manager.cpp
