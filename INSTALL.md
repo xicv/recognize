@@ -1,6 +1,6 @@
-# Installation Guide for whisper-stream-coreml
+# Installation Guide for recognize
 
-Multiple ways to install whisper-stream-coreml system-wide on macOS.
+Multiple ways to install recognize system-wide on macOS.
 
 ## 🚀 Quick Installation Methods
 
@@ -27,7 +27,7 @@ make install-user
 # Create a distribution package
 make package
 
-# This creates: dist/whisper-stream-coreml.tar.gz
+# This creates: dist/recognize.tar.gz
 # Share this file with others for easy installation
 ```
 
@@ -35,21 +35,21 @@ make package
 
 ### System-wide Installation (`make install`)
 
-**Installs to:** `/usr/local/bin/whisper-stream-coreml`
-**Models directory:** `~/.whisper-stream-coreml/models`
+**Installs to:** `/usr/local/bin/recognize`
+**Models directory:** `~/.recognize/models`
 **Accessible from:** Any terminal, any directory
 
 ```bash
 # After installation, use from anywhere:
-whisper-stream-coreml -m base.en
-whisper-stream-coreml --list-models
-whisper-stream-coreml -h
+recognize -m base.en
+recognize --list-models
+recognize -h
 ```
 
 ### User Installation (`make install-user`)
 
-**Installs to:** `~/bin/whisper-stream-coreml`
-**Models directory:** `~/.whisper-stream-coreml/models`
+**Installs to:** `~/bin/recognize`
+**Models directory:** `~/.recognize/models`
 **Requires:** Adding `~/bin` to your PATH
 
 ```bash
@@ -62,7 +62,7 @@ source ~/.zshrc
 
 When installed system-wide, models are stored in:
 ```
-~/.whisper-stream-coreml/models/
+~/.recognize/models/
 ```
 
 **Benefits:**
@@ -74,14 +74,14 @@ When installed system-wide, models are stored in:
 **Usage:**
 ```bash
 # Models download automatically
-whisper-stream-coreml -m base.en
-# Downloads to ~/.whisper-stream-coreml/models/ggml-base.en.bin
+recognize -m base.en
+# Downloads to ~/.recognize/models/ggml-base.en.bin
 
 # Check downloaded models
-ls -lh ~/.whisper-stream-coreml/models/
+ls -lh ~/.recognize/models/
 
 # Total models size
-du -sh ~/.whisper-stream-coreml/models/
+du -sh ~/.recognize/models/
 ```
 
 ## 🧹 Uninstallation
@@ -89,18 +89,18 @@ du -sh ~/.whisper-stream-coreml/models/
 ### Remove System Installation
 ```bash
 make uninstall
-# Removes: /usr/local/bin/whisper-stream-coreml
-# Preserves: ~/.whisper-stream-coreml/models/
+# Removes: /usr/local/bin/recognize
+# Preserves: ~/.recognize/models/
 ```
 
 ### Remove User Installation
 ```bash
-rm ~/bin/whisper-stream-coreml
+rm ~/bin/recognize
 ```
 
 ### Remove Models (Optional)
 ```bash
-rm -rf ~/.whisper-stream-coreml/
+rm -rf ~/.recognize/
 ```
 
 ## 🍺 Homebrew Formula (Future)
@@ -109,13 +109,13 @@ For public distribution, you can create a Homebrew tap:
 
 ```bash
 # Create custom tap
-brew tap your-username/whisper-stream-coreml
+brew tap your-username/recognize
 
 # Install via Homebrew
-brew install whisper-stream-coreml
+brew install recognize
 
 # Use anywhere
-whisper-stream-coreml -m base.en
+recognize -m base.en
 ```
 
 **Homebrew Benefits:**
@@ -129,8 +129,8 @@ whisper-stream-coreml -m base.en
 The `make package` command creates a self-contained distribution:
 
 ```
-dist/whisper-stream-coreml.tar.gz
-├── whisper-stream-coreml    # Compiled binary
+dist/recognize.tar.gz
+├── recognize                # Compiled binary
 ├── README.md                # Quick reference
 ├── TUTORIAL.md              # Complete guide
 ├── install.sh               # Auto-installer
@@ -139,11 +139,11 @@ dist/whisper-stream-coreml.tar.gz
 
 **To distribute:**
 1. Run `make package`
-2. Share `dist/whisper-stream-coreml.tar.gz`
+2. Share `dist/recognize.tar.gz`
 3. Recipients run:
    ```bash
-   tar xzf whisper-stream-coreml.tar.gz
-   cd whisper-stream-coreml
+   tar xzf recognize.tar.gz
+   cd recognize
    ./install.sh
    ```
 
@@ -153,14 +153,14 @@ After any installation method:
 
 ```bash
 # Check installation
-which whisper-stream-coreml
-# Should show: /usr/local/bin/whisper-stream-coreml
+which recognize
+# Should show: /usr/local/bin/recognize
 
 # Test functionality
-whisper-stream-coreml --help
+recognize --help
 
 # Verify models directory
-ls ~/.whisper-stream-coreml/models/
+ls ~/.recognize/models/
 ```
 
 ## 🚨 Troubleshooting
@@ -193,10 +193,10 @@ make install
 ### Models Directory Issues
 ```bash
 # Manually create models directory
-mkdir -p ~/.whisper-stream-coreml/models
+mkdir -p ~/.recognize/models
 
 # Check permissions
-ls -la ~/.whisper-stream-coreml/
+ls -la ~/.recognize/
 ```
 
 ## 📊 Storage Requirements

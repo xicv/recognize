@@ -3,7 +3,7 @@ build/
 bin/
 
 # Executables
-whisper-stream-coreml
+recognize
 *.exe
 *.out
 *.app

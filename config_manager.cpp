@@ -128,10 +128,10 @@ ConfigManager::ConfigManager() {
 }
 
 void ConfigManager::init_config_paths() {
-    // User config: ~/.whisper-stream-coreml/config.json
+    // User config: ~/.recognize/config.json
     const char* home = getenv("HOME");
     if (home) {
-        std::string config_dir = std::string(home) + "/.whisper-stream-coreml";
+        std::string config_dir = std::string(home) + "/.recognize";
         std::filesystem::create_directories(config_dir);
         user_config_path_ = config_dir + "/config.json";
     }

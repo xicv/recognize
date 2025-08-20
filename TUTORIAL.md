@@ -1,4 +1,4 @@
-# whisper-stream-coreml Tutorial
+# recognize Tutorial
 
 A comprehensive guide to using the macOS CLI for real-time speech recognition with CoreML acceleration.
 
@@ -167,10 +167,10 @@ make list-models
 Models download automatically when specified:
 ```bash
 # Downloads base.en if not present
-./whisper-stream-coreml -m base.en
+recognize -m base.en
 
 # Downloads with CoreML acceleration
-./whisper-stream-coreml -m base.en --coreml
+recognize -m base.en --coreml
 ```
 
 **Download Features:**
@@ -195,7 +195,7 @@ make run-vad MODEL=tiny.en
 
 **Manual command:**
 ```bash
-./whisper-stream-coreml -m base.en --step 0 --length 30000 -vth 0.6
+recognize -m base.en --step 0 --length 30000 -vth 0.6
 ```
 
 **When to use:**
@@ -209,7 +209,7 @@ make run-vad MODEL=tiny.en
 Transcribes continuously every few milliseconds.
 
 ```bash
-./whisper-stream-coreml -m base.en --step 500 --length 5000
+recognize -m base.en --step 500 --length 5000
 ```
 
 **Parameters:**
@@ -226,7 +226,7 @@ Transcribes continuously every few milliseconds.
 Save transcriptions to a file.
 
 ```bash
-./whisper-stream-coreml -m base.en -f transcript.txt
+recognize -m base.en -f transcript.txt
 ```
 
 **Features:**
@@ -240,13 +240,13 @@ Transcribe other languages or translate to English.
 
 ```bash
 # Spanish transcription
-./whisper-stream-coreml -m base -l es
+recognize -m base -l es
 
 # Spanish → English translation
-./whisper-stream-coreml -m base -l es --translate
+recognize -m base -l es --translate
 
 # Auto-detect language
-./whisper-stream-coreml -m base -l auto
+recognize -m base -l auto
 ```
 
 ## Advanced Configuration
@@ -255,13 +255,13 @@ Transcribe other languages or translate to English.
 
 List available microphones:
 ```bash
-./whisper-stream-coreml -m base.en
+recognize -m base.en
 # Shows: "found 5 capture devices" with list
 ```
 
 Use specific microphone:
 ```bash
-./whisper-stream-coreml -m base.en -c 3
+recognize -m base.en -c 3
 # Use device #3 (e.g., external mic)
 ```
 
@@ -269,23 +269,23 @@ Use specific microphone:
 
 #### Thread Count
 ```bash
-./whisper-stream-coreml -m base.en -t 8
+recognize -m base.en -t 8
 # Use 8 CPU threads (match your CPU cores)
 ```
 
 #### VAD Sensitivity
 ```bash
-./whisper-stream-coreml -m base.en --step 0 -vth 0.4
+recognize -m base.en --step 0 -vth 0.4
 # More sensitive (0.4) - detects quiet speech
-./whisper-stream-coreml -m base.en --step 0 -vth 0.8
+recognize -m base.en --step 0 -vth 0.8
 # Less sensitive (0.8) - ignores background noise
 ```
 
 #### Audio Context
 ```bash
-./whisper-stream-coreml -m base.en --length 15000
+recognize -m base.en --length 15000
 # Use 15 seconds of context (better accuracy)
-./whisper-stream-coreml -m base.en --length 3000
+recognize -m base.en --length 3000
 # Use 3 seconds (faster processing)
 ```
 
@@ -293,16 +293,16 @@ Use specific microphone:
 
 ```bash
 # Force enable CoreML (default on macOS)
-./whisper-stream-coreml -m base.en --coreml
+recognize -m base.en --coreml
 
 # Disable CoreML (use CPU/Metal)
-./whisper-stream-coreml -m base.en --no-coreml
+recognize -m base.en --no-coreml
 ```
 
 ### Save Audio Recordings
 
 ```bash
-./whisper-stream-coreml -m base.en --save-audio
+recognize -m base.en --save-audio
 # Saves audio to timestamped WAV file
 ```
 
@@ -324,7 +324,7 @@ make build
 
 **Permission denied:**
 ```bash
-chmod +x whisper-stream-coreml
+chmod +x recognize
 ```
 
 ### Runtime Issues
@@ -411,7 +411,7 @@ make quick          # Rebuild + run (after small changes)
 
 ```
 src/cli/
-├── whisper-stream-coreml.cpp    # Main application
+├── whisper-stream-coreml.cpp    # Main application (builds as 'recognize')
 ├── model_manager.cpp/.h         # Model download/management
 ├── CMakeLists.txt              # Build configuration
 ├── Makefile                    # Build automation
@@ -427,32 +427,32 @@ src/cli/
 ```bash
 # High accuracy, save to file
 make run-model MODEL=small.en
-./whisper-stream-coreml -m small.en -f meeting.txt --step 0 --length 30000
+recognize -m small.en -f meeting.txt --step 0 --length 30000
 ```
 
 ### Live Streaming
 ```bash
 # Fast, continuous mode
 make run-model MODEL=tiny.en
-./whisper-stream-coreml -m tiny.en --step 250 --length 3000
+recognize -m tiny.en --step 250 --length 3000
 ```
 
 ### Multilingual Interview
 ```bash
 # Auto-detect language, translate to English
-./whisper-stream-coreml -m base -l auto --translate -f interview.txt
+recognize -m base -l auto --translate -f interview.txt
 ```
 
 ### Phone Call Transcription
 ```bash
 # Optimize for voice quality
-./whisper-stream-coreml -m base.en -vth 0.4 --step 0 --length 10000
+recognize -m base.en -vth 0.4 --step 0 --length 10000
 ```
 
 ### Podcast Recording
 ```bash
 # Professional quality with timestamps
-./whisper-stream-coreml -m medium.en -f podcast.txt --no-timestamps false
+recognize -m medium.en -f podcast.txt --no-timestamps false
 ```
 
 ---
