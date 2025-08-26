@@ -85,44 +85,6 @@ namespace {
     }
 }
 
-// Include whisper_params definition
-struct whisper_params {
-    int32_t n_threads = 4;
-    int32_t step_ms = 3000;
-    int32_t length_ms = 10000;
-    int32_t keep_ms = 200;
-    int32_t capture_id = -1;
-    int32_t max_tokens = 32;
-    int32_t audio_ctx = 0;
-    int32_t beam_size = -1;
-
-    float vad_thold = 0.6f;
-    float freq_thold = 100.0f;
-
-    bool translate = false;
-    bool no_fallback = false;
-    bool print_special = false;
-    bool print_colors = false;
-    bool no_context = true;
-    bool no_timestamps = false;
-    bool tinydiarize = false;
-    bool save_audio = false;
-    bool use_coreml = true;
-    bool use_gpu = true;
-    bool flash_attn = false;
-
-    std::string language = "en";
-    std::string model = "";
-    std::string coreml_model = "";
-    std::string fname_out;
-    bool list_models = false;
-    
-    // Auto-copy settings
-    bool auto_copy_enabled = false;
-    int32_t auto_copy_max_duration_hours = 2; // Default: 2 hours
-    int32_t auto_copy_max_size_bytes = 1024 * 1024; // Default: 1MB
-};
-
 ConfigManager::ConfigManager() {
     init_config_paths();
 }
@@ -181,6 +143,7 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.print_colors) params.print_colors = *effective.print_colors;
     if (effective.save_audio) params.save_audio = *effective.save_audio;
     if (effective.output_file) params.fname_out = *effective.output_file;
+    if (effective.output_mode) params.output_mode = *effective.output_mode;
     
     // Auto-copy settings
     if (effective.auto_copy_enabled) params.auto_copy_enabled = *effective.auto_copy_enabled;
@@ -228,6 +191,8 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"output_file", "output_file"},
         {"format", "output_format"},
         {"output_format", "output_format"},
+        {"mode", "output_mode"},
+        {"output_mode", "output_mode"},
         
         // Auto-copy configuration keys
         {"auto_copy", "auto_copy_enabled"},
@@ -284,64 +249,70 @@ void ConfigManager::list_config() const {
     std::cout << "  project_config: " << project_config_path_ << "\n";
     std::cout << "\n";
     
-    auto print_config = [](const std::string& section, const ConfigData& config) {
-        std::cout << section << ":\n";
-        
-        if (config.default_model) 
-            std::cout << "  default_model: " << *config.default_model << "\n";
-        if (config.models_directory) 
-            std::cout << "  models_directory: " << *config.models_directory << "\n";
-        if (config.use_coreml) 
-            std::cout << "  use_coreml: " << (*config.use_coreml ? "true" : "false") << "\n";
-        if (config.coreml_model) 
-            std::cout << "  coreml_model: " << *config.coreml_model << "\n";
-        if (config.capture_device) 
-            std::cout << "  capture_device: " << *config.capture_device << "\n";
-        if (config.step_ms) 
-            std::cout << "  step_ms: " << *config.step_ms << "\n";
-        if (config.length_ms) 
-            std::cout << "  length_ms: " << *config.length_ms << "\n";
-        if (config.keep_ms) 
-            std::cout << "  keep_ms: " << *config.keep_ms << "\n";
-        if (config.vad_threshold) 
-            std::cout << "  vad_threshold: " << *config.vad_threshold << "\n";
-        if (config.freq_threshold) 
-            std::cout << "  freq_threshold: " << *config.freq_threshold << "\n";
-        if (config.threads) 
-            std::cout << "  threads: " << *config.threads << "\n";
-        if (config.max_tokens) 
-            std::cout << "  max_tokens: " << *config.max_tokens << "\n";
-        if (config.beam_size) 
-            std::cout << "  beam_size: " << *config.beam_size << "\n";
-        if (config.language) 
-            std::cout << "  language: " << *config.language << "\n";
-        if (config.translate) 
-            std::cout << "  translate: " << (*config.translate ? "true" : "false") << "\n";
-        if (config.no_timestamps) 
-            std::cout << "  no_timestamps: " << (*config.no_timestamps ? "true" : "false") << "\n";
-        if (config.print_special) 
-            std::cout << "  print_special: " << (*config.print_special ? "true" : "false") << "\n";
-        if (config.print_colors) 
-            std::cout << "  print_colors: " << (*config.print_colors ? "true" : "false") << "\n";
-        if (config.save_audio) 
-            std::cout << "  save_audio: " << (*config.save_audio ? "true" : "false") << "\n";
-        if (config.output_file) 
-            std::cout << "  output_file: " << *config.output_file << "\n";
-        if (config.output_format) 
-            std::cout << "  output_format: " << *config.output_format << "\n";
-        
-        std::cout << "\n";
-    };
+    // Show all available configuration options with descriptions
+    std::cout << "Available Configuration Options:\n";
+    std::cout << "================================\n\n";
     
-    print_config("Effective Configuration", effective);
+    // Model Settings
+    std::cout << "📦 Model Settings:\n";
+    std::cout << "  model (default_model)        : " << (effective.default_model ? *effective.default_model : "(auto-select)") << " - Default model to use\n";
+    std::cout << "  models_dir                   : " << (effective.models_directory ? *effective.models_directory : "models/") << " - Directory to store models\n";
+    std::cout << "  use_coreml                   : " << (effective.use_coreml ? (*effective.use_coreml ? "true" : "false") : "true") << " - Enable CoreML acceleration\n";
+    std::cout << "  coreml_model                 : " << (effective.coreml_model ? *effective.coreml_model : "(auto)") << " - Specific CoreML model path\n";
+    std::cout << "\n";
     
-    std::cout << "💡 Quick Config Examples:\n";
-    std::cout << "   config set models_dir /custom/path     # Change models location\n";
+    // Audio Settings  
+    std::cout << "🎙️  Audio Settings:\n";
+    std::cout << "  capture (capture_device)     : " << (effective.capture_device ? std::to_string(*effective.capture_device) : "-1") << " - Audio capture device ID (-1 = default)\n";
+    std::cout << "  step (step_ms)               : " << (effective.step_ms ? std::to_string(*effective.step_ms) : "3000") << " - Audio step size in ms (0 = VAD mode)\n";
+    std::cout << "  length (length_ms)           : " << (effective.length_ms ? std::to_string(*effective.length_ms) : "10000") << " - Audio length in ms\n";
+    std::cout << "  keep (keep_ms)               : " << (effective.keep_ms ? std::to_string(*effective.keep_ms) : "200") << " - Audio to keep from previous step\n";
+    std::cout << "  vad (vad_threshold)          : " << (effective.vad_threshold ? std::to_string(*effective.vad_threshold) : "0.6") << " - Voice activity detection threshold (0.0-1.0)\n";
+    std::cout << "  freq (freq_threshold)        : " << (effective.freq_threshold ? std::to_string(*effective.freq_threshold) : "100.0") << " - High-pass frequency cutoff\n";
+    std::cout << "\n";
+    
+    // Processing Settings
+    std::cout << "⚡ Processing Settings:\n";
+    std::cout << "  threads                      : " << (effective.threads ? std::to_string(*effective.threads) : "4") << " - Number of processing threads\n";
+    std::cout << "  tokens (max_tokens)          : " << (effective.max_tokens ? std::to_string(*effective.max_tokens) : "32") << " - Maximum tokens per chunk\n";
+    std::cout << "  beam (beam_size)             : " << (effective.beam_size ? std::to_string(*effective.beam_size) : "-1") << " - Beam search size (-1 = auto)\n";
+    std::cout << "  language (lang)              : " << (effective.language ? *effective.language : "en") << " - Source language code\n";
+    std::cout << "  translate                    : " << (effective.translate ? (*effective.translate ? "true" : "false") : "false") << " - Translate to English\n";
+    std::cout << "\n";
+    
+    // Output Settings
+    std::cout << "📄 Output Settings:\n";
+    std::cout << "  timestamps (no_timestamps)   : " << (effective.no_timestamps ? (*effective.no_timestamps ? "disabled" : "enabled") : "enabled") << " - Show timestamps in output\n";
+    std::cout << "  special (print_special)      : " << (effective.print_special ? (*effective.print_special ? "true" : "false") : "false") << " - Print special tokens\n";
+    std::cout << "  colors (print_colors)        : " << (effective.print_colors ? (*effective.print_colors ? "true" : "false") : "false") << " - Print colors based on confidence\n";
+    std::cout << "  save_audio                   : " << (effective.save_audio ? (*effective.save_audio ? "true" : "false") : "false") << " - Save recorded audio to WAV\n";
+    std::cout << "  output (output_file)         : " << (effective.output_file ? *effective.output_file : "(none)") << " - Output file path\n";
+    std::cout << "  format (output_format)       : " << (effective.output_format ? *effective.output_format : "plain") << " - Output format (json/plain/timestamped)\n";
+    std::cout << "  mode (output_mode)           : " << (effective.output_mode ? *effective.output_mode : "original") << " - Output mode (original/english/bilingual)\n";
+    std::cout << "\n";
+    
+    // Auto-copy Settings
+    std::cout << "📋 Auto-copy Settings:\n";
+    std::cout << "  auto_copy (auto_copy_enabled): " << (effective.auto_copy_enabled ? (*effective.auto_copy_enabled ? "true" : "false") : "false") << " - Auto-copy to clipboard when session ends\n";
+    std::cout << "  auto_copy_max_duration       : " << (effective.auto_copy_max_duration_hours ? std::to_string(*effective.auto_copy_max_duration_hours) : "2") << " - Max session duration (hours) before skipping auto-copy\n";
+    std::cout << "  auto_copy_max_size           : " << (effective.auto_copy_max_size_bytes ? std::to_string(*effective.auto_copy_max_size_bytes) : "1048576") << " - Max transcription size (bytes) before skipping auto-copy\n";
+    std::cout << "\n";
+    
+    std::cout << "💡 Configuration Examples:\n";
     std::cout << "   config set model base.en               # Set default model\n";
     std::cout << "   config set threads 8                   # Set thread count\n";
+    std::cout << "   config set vad_threshold 0.7           # Adjust voice detection\n";
+    std::cout << "   config set step_ms 0                   # Enable VAD mode\n";
     std::cout << "   config set print_colors true           # Enable colored output\n";
+    std::cout << "   config set auto_copy true              # Enable clipboard copy\n";
+    std::cout << "   config set output_mode bilingual       # Show original + English\n";
+    std::cout << "   config set models_dir /custom/path     # Change models location\n";
     std::cout << "   config get <key>                       # Get any setting\n";
     std::cout << "   config reset                           # Reset all to defaults\n";
+    std::cout << "\n";
+    std::cout << "🌍 Environment Variables (WHISPER_* prefix):\n";
+    std::cout << "   All config keys can also be set via environment variables.\n";
+    std::cout << "   Examples: WHISPER_MODEL, WHISPER_THREADS, WHISPER_VAD_THRESHOLD\n";
 }
 
 void ConfigManager::reset_config() {
@@ -468,6 +439,12 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.save_audio) merged.save_audio = config.save_audio;
         if (config.output_file) merged.output_file = config.output_file;
         if (config.output_format) merged.output_format = config.output_format;
+        if (config.output_mode) merged.output_mode = config.output_mode;
+        
+        // Auto-copy settings
+        if (config.auto_copy_enabled) merged.auto_copy_enabled = config.auto_copy_enabled;
+        if (config.auto_copy_max_duration_hours) merged.auto_copy_max_duration_hours = config.auto_copy_max_duration_hours;
+        if (config.auto_copy_max_size_bytes) merged.auto_copy_max_size_bytes = config.auto_copy_max_size_bytes;
     }
     
     return merged;
@@ -523,6 +500,7 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.save_audio) add_bool("save_audio", *config.save_audio);
     if (config.output_file) add_field("output_file", *config.output_file);
     if (config.output_format) add_field("output_format", *config.output_format);
+    if (config.output_mode) add_field("output_mode", *config.output_mode);
     
     // Auto-copy settings
     if (config.auto_copy_enabled) add_bool("auto_copy_enabled", *config.auto_copy_enabled);
@@ -589,6 +567,7 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.save_audio = get_bool("save_audio");
     config.output_file = get_string("output_file");
     config.output_format = get_string("output_format");
+    config.output_mode = get_string("output_mode");
     
     // Auto-copy settings
     config.auto_copy_enabled = get_bool("auto_copy_enabled");
@@ -665,6 +644,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "save_audio") config.save_audio = std::nullopt;
         else if (key == "output_file") config.output_file = std::nullopt;
         else if (key == "output_format") config.output_format = std::nullopt;
+        else if (key == "output_mode") config.output_mode = std::nullopt;
         else if (key == "auto_copy_enabled") config.auto_copy_enabled = std::nullopt;
         else if (key == "auto_copy_max_duration_hours") config.auto_copy_max_duration_hours = std::nullopt;
         else if (key == "auto_copy_max_size_bytes") config.auto_copy_max_size_bytes = std::nullopt;
@@ -730,6 +710,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         }
         else if (key == "output_file") config.output_file = value;
         else if (key == "output_format") config.output_format = value;
+        else if (key == "output_mode") config.output_mode = value;
         else if (key == "auto_copy_enabled") {
             std::string lower = value;
             std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
@@ -769,6 +750,7 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "save_audio") return config.save_audio ? std::make_optional(*config.save_audio ? "true" : "false") : std::nullopt;
     else if (key == "output_file") return config.output_file;
     else if (key == "output_format") return config.output_format;
+    else if (key == "output_mode") return config.output_mode;
     else if (key == "auto_copy_enabled") return config.auto_copy_enabled ? std::make_optional(*config.auto_copy_enabled ? "true" : "false") : std::nullopt;
     else if (key == "auto_copy_max_duration_hours") return config.auto_copy_max_duration_hours ? std::make_optional(std::to_string(*config.auto_copy_max_duration_hours)) : std::nullopt;
     else if (key == "auto_copy_max_size_bytes") return config.auto_copy_max_size_bytes ? std::make_optional(std::to_string(*config.auto_copy_max_size_bytes)) : std::nullopt;

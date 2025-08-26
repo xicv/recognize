@@ -4,9 +4,7 @@
 #include <map>
 #include <optional>
 #include <vector>
-
-// Forward declaration for whisper_params
-struct whisper_params;
+#include "whisper_params.h"
 
 struct ConfigData {
     // Model settings
@@ -37,6 +35,7 @@ struct ConfigData {
     // Output settings
     std::optional<std::string> output_file;
     std::optional<std::string> output_format; // json, plain, timestamped
+    std::optional<std::string> output_mode; // original, english, bilingual
     
     // Auto-copy settings
     std::optional<bool> auto_copy_enabled;

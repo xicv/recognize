@@ -8,6 +8,7 @@
 #include "model_manager.h"
 #include "config_manager.h"
 #include "export_manager.h"
+#include "whisper_params.h"
 
 #include <chrono>
 #include <cstdio>
@@ -61,61 +62,6 @@ void signal_handler(int signal) {
         }
     }
 }
-
-// Command-line parameters with CoreML specific options
-struct whisper_params {
-    int32_t n_threads  = std::min(4, (int32_t) std::thread::hardware_concurrency());
-    int32_t step_ms    = 3000;
-    int32_t length_ms  = 10000;
-    int32_t keep_ms    = 200;
-    int32_t capture_id = -1;
-    int32_t max_tokens = 32;
-    int32_t audio_ctx  = 0;
-    int32_t beam_size  = -1;
-
-    float vad_thold    = 0.6f;
-    float freq_thold   = 100.0f;
-
-    bool translate     = false;
-    bool no_fallback   = false;
-    bool print_special = false;
-    bool print_colors  = false;
-    bool no_context    = true;
-    bool no_timestamps = false;
-    bool tinydiarize   = false;
-    bool save_audio    = false;
-    bool use_coreml    = true;   // Enable CoreML by default on macOS
-    bool use_gpu       = true;   // Keep GPU support for fallback
-    bool flash_attn    = false;
-
-    std::string language  = "en";
-    std::string model     = ""; // Will be auto-resolved by ModelManager
-    std::string coreml_model = ""; // Optional CoreML model path
-    std::string fname_out;
-    bool list_models = false; // Flag to list available models
-    
-    // Model management options
-    bool list_downloaded = false;
-    bool show_storage = false;
-    bool delete_model_flag = false;
-    bool delete_all_models_flag = false;
-    bool cleanup_models = false;
-    std::string model_to_delete = "";
-    
-    // Auto-copy settings
-    bool auto_copy_enabled = false;
-    int32_t auto_copy_max_duration_hours = 2; // Default: 2 hours
-    int32_t auto_copy_max_size_bytes = 1024 * 1024; // Default: 1MB
-    
-    // Export settings
-    bool export_enabled = false;
-    std::string export_format = "txt";
-    std::string export_file = "";
-    bool export_auto_filename = true;
-    bool export_include_metadata = true;
-    bool export_include_timestamps = true;
-    bool export_include_confidence = false;
-};
 
 // Auto-copy functionality
 struct AutoCopySession {
@@ -237,6 +183,336 @@ void perform_auto_copy(AutoCopySession& session, const whisper_params& params) {
     }
 }
 
+// Structure to hold bilingual results
+struct BilingualSegment {
+    int64_t t0;
+    int64_t t1;
+    std::string original_text;
+    std::string english_text;
+    float original_confidence;
+    float english_confidence;
+    bool speaker_turn;
+};
+
+// Process audio with bilingual output support
+int process_audio_segment(struct whisper_context* ctx, struct whisper_context* ctx_translate, 
+                         const whisper_params& params, const std::vector<float>& pcmf32,
+                         std::vector<BilingualSegment>& bilingual_results) {
+    
+    whisper_full_params wparams = whisper_full_default_params(params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
+    
+    // Configure common parameters
+    wparams.print_progress   = false;
+    wparams.print_special    = params.print_special;
+    wparams.print_realtime   = false;
+    wparams.print_timestamps = !params.no_timestamps;
+    wparams.single_segment   = true; // Force single segment for bilingual processing
+    wparams.max_tokens       = params.max_tokens;
+    wparams.language         = params.language.c_str();
+    wparams.n_threads        = params.n_threads;
+    wparams.beam_search.beam_size = params.beam_size;
+    wparams.audio_ctx        = params.audio_ctx;
+    wparams.tdrz_enable      = params.tinydiarize;
+    wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
+    
+    bilingual_results.clear();
+    
+    if (params.output_mode == "original") {
+        // Original language only
+        wparams.translate = false;
+        if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            return -1;
+        }
+        
+        // Extract segments
+        const int n_segments = whisper_full_n_segments(ctx);
+        for (int i = 0; i < n_segments; ++i) {
+            BilingualSegment seg;
+            seg.t0 = whisper_full_get_segment_t0(ctx, i);
+            seg.t1 = whisper_full_get_segment_t1(ctx, i);
+            seg.original_text = whisper_full_get_segment_text(ctx, i);
+            seg.english_text = ""; // No translation
+            
+            // Calculate confidence
+            seg.original_confidence = 0.0f;
+            int token_count = whisper_full_n_tokens(ctx, i);
+            if (token_count > 0) {
+                for (int j = 0; j < token_count; ++j) {
+                    seg.original_confidence += whisper_full_get_token_p(ctx, i, j);
+                }
+                seg.original_confidence /= token_count;
+            }
+            seg.english_confidence = 0.0f;
+            seg.speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
+            
+            bilingual_results.push_back(seg);
+        }
+    }
+    else if (params.output_mode == "english") {
+        // English translation only
+        wparams.translate = true;
+        if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            return -1;
+        }
+        
+        // Extract segments
+        const int n_segments = whisper_full_n_segments(ctx);
+        for (int i = 0; i < n_segments; ++i) {
+            BilingualSegment seg;
+            seg.t0 = whisper_full_get_segment_t0(ctx, i);
+            seg.t1 = whisper_full_get_segment_t1(ctx, i);
+            seg.original_text = ""; // No original
+            seg.english_text = whisper_full_get_segment_text(ctx, i);
+            
+            // Calculate confidence
+            seg.english_confidence = 0.0f;
+            int token_count = whisper_full_n_tokens(ctx, i);
+            if (token_count > 0) {
+                for (int j = 0; j < token_count; ++j) {
+                    seg.english_confidence += whisper_full_get_token_p(ctx, i, j);
+                }
+                seg.english_confidence /= token_count;
+            }
+            seg.original_confidence = 0.0f;
+            seg.speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
+            
+            bilingual_results.push_back(seg);
+        }
+    }
+    else if (params.output_mode == "bilingual") {
+        // Two-pass processing: original + translation
+        
+        // First pass: original language
+        wparams.translate = false;
+        if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            return -1;
+        }
+        
+        // Second pass: translation
+        wparams.translate = true;
+        if (whisper_full(ctx_translate, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            return -1;
+        }
+        
+        // Merge results (using original segments as base, matching by timestamps)
+        const int n_segments_orig = whisper_full_n_segments(ctx);
+        const int n_segments_trans = whisper_full_n_segments(ctx_translate);
+        
+        for (int i = 0; i < n_segments_orig; ++i) {
+            BilingualSegment seg;
+            seg.t0 = whisper_full_get_segment_t0(ctx, i);
+            seg.t1 = whisper_full_get_segment_t1(ctx, i);
+            seg.original_text = whisper_full_get_segment_text(ctx, i);
+            
+            // Calculate original confidence
+            seg.original_confidence = 0.0f;
+            int token_count = whisper_full_n_tokens(ctx, i);
+            if (token_count > 0) {
+                for (int j = 0; j < token_count; ++j) {
+                    seg.original_confidence += whisper_full_get_token_p(ctx, i, j);
+                }
+                seg.original_confidence /= token_count;
+            }
+            
+            // Find matching translation segment (approximate timestamp matching)
+            seg.english_text = "";
+            seg.english_confidence = 0.0f;
+            for (int j = 0; j < n_segments_trans; ++j) {
+                int64_t trans_t0 = whisper_full_get_segment_t0(ctx_translate, j);
+                int64_t trans_t1 = whisper_full_get_segment_t1(ctx_translate, j);
+                
+                // Check for overlap (allow some tolerance)
+                int64_t overlap_start = std::max(seg.t0, trans_t0);
+                int64_t overlap_end = std::min(seg.t1, trans_t1);
+                if (overlap_end > overlap_start) {
+                    // Found overlapping segment
+                    if (seg.english_text.empty()) {
+                        seg.english_text = whisper_full_get_segment_text(ctx_translate, j);
+                    } else {
+                        seg.english_text += " " + std::string(whisper_full_get_segment_text(ctx_translate, j));
+                    }
+                    
+                    // Update confidence (average)
+                    int trans_token_count = whisper_full_n_tokens(ctx_translate, j);
+                    if (trans_token_count > 0) {
+                        float trans_confidence = 0.0f;
+                        for (int k = 0; k < trans_token_count; ++k) {
+                            trans_confidence += whisper_full_get_token_p(ctx_translate, j, k);
+                        }
+                        trans_confidence /= trans_token_count;
+                        seg.english_confidence = (seg.english_confidence + trans_confidence) / 2.0f;
+                    }
+                }
+            }
+            
+            seg.speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
+            bilingual_results.push_back(seg);
+        }
+    }
+    
+    return 0;
+}
+
+// Print bilingual results with proper formatting
+void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params, 
+                             AutoCopySession& auto_copy_session, ExportSession& export_session) {
+    
+    for (const auto& seg : segments) {
+        if (params.no_timestamps) {
+            // Plain text mode
+            if (params.output_mode == "original") {
+                if (params.print_colors) {
+                    // Color printing not implemented for bilingual mode
+                    printf("%s", seg.original_text.c_str());
+                } else {
+                    printf("%s", seg.original_text.c_str());
+                }
+                
+                // Add to auto-copy buffer
+                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                    auto_copy_session.transcription_buffer << seg.original_text;
+                }
+                
+                // Add to export session
+                if (params.export_enabled) {
+                    export_session.segments.emplace_back(
+                        0, 0,
+                        seg.original_text,
+                        seg.original_confidence,
+                        seg.speaker_turn
+                    );
+                }
+            }
+            else if (params.output_mode == "english") {
+                printf("%s", seg.english_text.c_str());
+                
+                // Add to auto-copy buffer
+                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                    auto_copy_session.transcription_buffer << seg.english_text;
+                }
+                
+                // Add to export session
+                if (params.export_enabled) {
+                    export_session.segments.emplace_back(
+                        0, 0,
+                        seg.english_text,
+                        seg.english_confidence,
+                        seg.speaker_turn
+                    );
+                }
+            }
+            else if (params.output_mode == "bilingual") {
+                // Detect language for prefixes
+                std::string lang_code = params.language;
+                if (lang_code == "auto") lang_code = "orig";
+                
+                printf("%s: %s\n", lang_code.c_str(), seg.original_text.c_str());
+                printf("en: %s\n", seg.english_text.c_str());
+                
+                // Add to auto-copy buffer (bilingual format)
+                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                    auto_copy_session.transcription_buffer << lang_code << ": " << seg.original_text << "\n";
+                    auto_copy_session.transcription_buffer << "en: " << seg.english_text << "\n";
+                }
+                
+                // Add to export session (combine both texts)
+                if (params.export_enabled) {
+                    std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
+                    export_session.segments.emplace_back(
+                        0, 0,
+                        combined_text,
+                        (seg.original_confidence + seg.english_confidence) / 2.0f,
+                        seg.speaker_turn
+                    );
+                }
+            }
+        }
+        else {
+            // Timestamped mode
+            std::string timestamp_prefix = "[" + to_timestamp(seg.t0, false) + " --> " + to_timestamp(seg.t1, false) + "]  ";
+            
+            if (params.output_mode == "original") {
+                printf("%s%s", timestamp_prefix.c_str(), seg.original_text.c_str());
+                if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
+                printf("\n");
+                
+                // Add to auto-copy buffer
+                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                    auto_copy_session.transcription_buffer << timestamp_prefix << seg.original_text;
+                    if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                    auto_copy_session.transcription_buffer << "\n";
+                }
+                
+                // Add to export session
+                if (params.export_enabled) {
+                    export_session.segments.emplace_back(
+                        seg.t0 / 10,
+                        seg.t1 / 10,
+                        seg.original_text,
+                        seg.original_confidence,
+                        seg.speaker_turn
+                    );
+                }
+            }
+            else if (params.output_mode == "english") {
+                printf("%s%s", timestamp_prefix.c_str(), seg.english_text.c_str());
+                if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
+                printf("\n");
+                
+                // Add to auto-copy buffer
+                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                    auto_copy_session.transcription_buffer << timestamp_prefix << seg.english_text;
+                    if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                    auto_copy_session.transcription_buffer << "\n";
+                }
+                
+                // Add to export session
+                if (params.export_enabled) {
+                    export_session.segments.emplace_back(
+                        seg.t0 / 10,
+                        seg.t1 / 10,
+                        seg.english_text,
+                        seg.english_confidence,
+                        seg.speaker_turn
+                    );
+                }
+            }
+            else if (params.output_mode == "bilingual") {
+                // Detect language for prefixes
+                std::string lang_code = params.language;
+                if (lang_code == "auto") lang_code = "orig";
+                
+                printf("%s%s: %s\n", timestamp_prefix.c_str(), lang_code.c_str(), seg.original_text.c_str());
+                printf("%sen: %s", timestamp_prefix.c_str(), seg.english_text.c_str());
+                if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
+                printf("\n");
+                
+                // Add to auto-copy buffer
+                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                    auto_copy_session.transcription_buffer << timestamp_prefix << lang_code << ": " << seg.original_text << "\n";
+                    auto_copy_session.transcription_buffer << timestamp_prefix << "en: " << seg.english_text;
+                    if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                    auto_copy_session.transcription_buffer << "\n";
+                }
+                
+                // Add to export session (combine both texts)
+                if (params.export_enabled) {
+                    std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
+                    export_session.segments.emplace_back(
+                        seg.t0 / 10,
+                        seg.t1 / 10,
+                        combined_text,
+                        (seg.original_confidence + seg.english_confidence) / 2.0f,
+                        seg.speaker_turn
+                    );
+                }
+            }
+        }
+        
+        fflush(stdout);
+    }
+}
+
 void perform_export(ExportSession& session, const whisper_params& params) {
     if (!params.export_enabled || session.segments.empty()) {
         return;
@@ -332,6 +608,7 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-l"    || arg == "--language")      { params.language      = argv[++i]; }
         else if (arg == "-m"    || arg == "--model")         { params.model         = argv[++i]; }
         else if (arg == "-f"    || arg == "--file")          { params.fname_out     = argv[++i]; }
+        else if (arg == "-om"   || arg == "--output-mode")   { params.output_mode   = argv[++i]; }
         else if (arg == "-tdrz" || arg == "--tinydiarize")   { params.tinydiarize   = true; }
         else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = true; }
         else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
@@ -452,6 +729,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -l LANG,  --language LANG [%-7s] spoken language\n",                                params.language.c_str());
     fprintf(stderr, "  -m FNAME, --model FNAME   [%-7s] model path\n",                                     params.model.c_str());
     fprintf(stderr, "  -f FNAME, --file FNAME    [%-7s] text output file name\n",                          params.fname_out.c_str());
+    fprintf(stderr, "  -om MODE, --output-mode MODE [%-7s] output mode: original, english, bilingual\n",    params.output_mode.c_str());
     fprintf(stderr, "  -tdrz,    --tinydiarize   [%-7s] enable tinydiarize (requires a tdrz model)\n",     params.tinydiarize ? "true" : "false");
     fprintf(stderr, "  -sa,      --save-audio    [%-7s] save the recorded audio to a file\n",              params.save_audio ? "true" : "false");
     fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n",                          params.use_gpu ? "false" : "true");
@@ -505,6 +783,8 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  %s --export --export-format md --export-file meeting.md # export to Markdown\n", argv[0]);
     fprintf(stderr, "  %s --export --export-format srt       # generate SRT subtitles\n", argv[0]);
     fprintf(stderr, "  %s --auto-copy                        # auto-copy to clipboard\n", argv[0]);
+    fprintf(stderr, "  %s --output-mode bilingual            # show original + English translation\n", argv[0]);
+    fprintf(stderr, "  %s --output-mode english -l zh        # translate Chinese to English only\n", argv[0]);
     fprintf(stderr, "  %s config set model base.en           # set default model\n", argv[0]);
     fprintf(stderr, "  %s config set export_enabled true     # enable auto-export\n", argv[0]);
     fprintf(stderr, "  %s config list                        # show current config\n", argv[0]);
@@ -659,6 +939,39 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "error: failed to initialize whisper context\n");
         return 2;
     }
+    
+    // Validate output mode
+    if (params.output_mode != "original" && params.output_mode != "english" && params.output_mode != "bilingual") {
+        fprintf(stderr, "error: invalid output mode '%s'. Valid modes: original, english, bilingual\n", params.output_mode.c_str());
+        return 1;
+    }
+    
+    // Check compatibility between translate flag and output mode
+    if (params.translate) {
+        // If --translate is used, default to "english" mode for compatibility
+        if (params.output_mode == "original") {
+            params.output_mode = "english";
+            fprintf(stderr, "%s: --translate flag detected, switching to 'english' output mode\n", __func__);
+        }
+    }
+    
+    // Check if translation is supported for non-original modes
+    bool needs_translation = (params.output_mode == "english" || params.output_mode == "bilingual");
+    if (needs_translation && !whisper_is_multilingual(ctx)) {
+        fprintf(stderr, "error: output mode '%s' requires a multilingual model, but current model is English-only\n", params.output_mode.c_str());
+        return 1;
+    }
+    
+    // For bilingual mode, we need a second context for translation
+    struct whisper_context * ctx_translate = nullptr;
+    if (params.output_mode == "bilingual") {
+        ctx_translate = whisper_init_from_file_with_params(params.model.c_str(), cparams);
+        if (ctx_translate == nullptr) {
+            fprintf(stderr, "error: failed to initialize translation context for bilingual mode\n");
+            whisper_free(ctx);
+            return 2;
+        }
+    }
 
     std::vector<float> pcmf32    (n_samples_30s, 0.0f);
     std::vector<float> pcmf32_old;
@@ -683,7 +996,7 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "%s: CoreML support: not compiled\n", __func__);
         #endif
         
-        fprintf(stderr, "%s: processing %d samples (step = %.1f sec / len = %.1f sec / keep = %.1f sec), %d threads, lang = %s, task = %s, timestamps = %d ...\n",
+        fprintf(stderr, "%s: processing %d samples (step = %.1f sec / len = %.1f sec / keep = %.1f sec), %d threads, lang = %s, task = %s, output_mode = %s, timestamps = %d ...\n",
                 __func__,
                 n_samples_step,
                 float(n_samples_step)/WHISPER_SAMPLE_RATE,
@@ -692,6 +1005,7 @@ int main(int argc, char ** argv) {
                 params.n_threads,
                 params.language.c_str(),
                 params.translate ? "translate" : "transcribe",
+                params.output_mode.c_str(),
                 params.no_timestamps ? 0 : 1);
 
         if (!use_vad) {
@@ -851,7 +1165,9 @@ int main(int argc, char ** argv) {
             wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
             wparams.prompt_n_tokens  = params.no_context ? 0       : prompt_tokens.size();
 
-            if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            // Use new bilingual processing
+            std::vector<BilingualSegment> bilingual_results;
+            if (process_audio_segment(ctx, ctx_translate, params, pcmf32, bilingual_results) != 0) {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
                 return 6;
             }
@@ -868,137 +1184,9 @@ int main(int argc, char ** argv) {
                     printf("\n### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
                     printf("\n");
                 }
-
-                const int n_segments = whisper_full_n_segments(ctx);
-                for (int i = 0; i < n_segments; ++i) {
-                    const char * text = whisper_full_get_segment_text(ctx, i);
-
-                    if (params.no_timestamps) {
-                        if (params.print_colors) {
-                            // Print tokens with color based on confidence
-                            for (int j = 0; j < whisper_full_n_tokens(ctx, i); ++j) {
-                                if (params.print_special == false) {
-                                    const whisper_token id = whisper_full_get_token_id(ctx, i, j);
-                                    if (id >= whisper_token_eot(ctx)) {
-                                        continue;
-                                    }
-                                }
-
-                                const char * token_text = whisper_full_get_token_text(ctx, i, j);
-                                const float  token_p    = whisper_full_get_token_p   (ctx, i, j);
-
-                                const int col = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(token_p, 3)*float(k_colors.size()))));
-
-                                printf("%s%s%s", k_colors[col].c_str(), token_text, "\033[0m");
-                            }
-                        } else {
-                            printf("%s", text);
-                        }
-                        fflush(stdout);
-                        if (params.fname_out.length() > 0) {
-                            fout << text;
-                        }
-                        
-                        // Add to auto-copy buffer (without timestamps for plain text mode)
-                        if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
-                            auto_copy_session.transcription_buffer << text;
-                        }
-                        
-                        // Add to export session (for plain text mode)
-                        if (params.export_enabled) {
-                            // Calculate average confidence
-                            float avg_confidence = 0.0f;
-                            int token_count = whisper_full_n_tokens(ctx, i);
-                            if (token_count > 0) {
-                                for (int j = 0; j < token_count; ++j) {
-                                    avg_confidence += whisper_full_get_token_p(ctx, i, j);
-                                }
-                                avg_confidence /= token_count;
-                            }
-                            
-                            // Create segment without timestamps for no_timestamps mode
-                            export_session.segments.emplace_back(
-                                0, 0, // No timestamps in this mode
-                                std::string(text),
-                                avg_confidence,
-                                false // No speaker turn detection in plain mode
-                            );
-                        }
-                    } else {
-                        const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-                        const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                        
-                        std::string timestamp_prefix = "[" + to_timestamp(t0, false) + " --> " + to_timestamp(t1, false) + "]  ";
-                        printf("%s", timestamp_prefix.c_str());
-
-                        if (params.print_colors) {
-                            // Print tokens with color based on confidence
-                            for (int j = 0; j < whisper_full_n_tokens(ctx, i); ++j) {
-                                if (params.print_special == false) {
-                                    const whisper_token id = whisper_full_get_token_id(ctx, i, j);
-                                    if (id >= whisper_token_eot(ctx)) {
-                                        continue;
-                                    }
-                                }
-
-                                const char * token_text = whisper_full_get_token_text(ctx, i, j);
-                                const float  token_p    = whisper_full_get_token_p   (ctx, i, j);
-
-                                const int col = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(token_p, 3)*float(k_colors.size()))));
-
-                                printf("%s%s%s", k_colors[col].c_str(), token_text, "\033[0m");
-                            }
-                        } else {
-                            printf("%s", text);
-                        }
-
-                        if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
-                            printf(" [SPEAKER_TURN]");
-                        }
-                        printf("\n");
-                        
-                        fflush(stdout);
-                        if (params.fname_out.length() > 0) {
-                            std::string output = timestamp_prefix + text;
-                            if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
-                                output += " [SPEAKER_TURN]";
-                            }
-                            output += "\n";
-                            fout << output;
-                        }
-                        
-                        // Add to auto-copy buffer (with timestamps for timestamped mode)
-                        if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
-                            auto_copy_session.transcription_buffer << timestamp_prefix << text;
-                            if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
-                                auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
-                            }
-                            auto_copy_session.transcription_buffer << "\n";
-                        }
-                        
-                        // Add to export session (with timestamps for timestamped mode)
-                        if (params.export_enabled) {
-                            // Calculate average confidence
-                            float avg_confidence = 0.0f;
-                            int token_count = whisper_full_n_tokens(ctx, i);
-                            if (token_count > 0) {
-                                for (int j = 0; j < token_count; ++j) {
-                                    avg_confidence += whisper_full_get_token_p(ctx, i, j);
-                                }
-                                avg_confidence /= token_count;
-                            }
-                            
-                            // Create segment with timestamps and speaker turn info
-                            export_session.segments.emplace_back(
-                                t0 / 10, // Convert to milliseconds
-                                t1 / 10, // Convert to milliseconds
-                                std::string(text),
-                                avg_confidence,
-                                whisper_full_get_segment_speaker_turn_next(ctx, i)
-                            );
-                        }
-                    }
-                }
+                
+                // Use new bilingual printing function
+                print_bilingual_results(bilingual_results, params, auto_copy_session, export_session);
 
                 if (params.fname_out.length() > 0) {
                     fout << std::endl;
@@ -1047,6 +1235,11 @@ int main(int argc, char ** argv) {
     
     whisper_print_timings(ctx);
     whisper_free(ctx);
+    
+    // Clean up translation context if it was created
+    if (ctx_translate) {
+        whisper_free(ctx_translate);
+    }
 
     return 0;
 }
