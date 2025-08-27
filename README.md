@@ -11,6 +11,7 @@ A macOS CLI for real-time speech recognition with CoreML acceleration, based on 
 - **Comprehensive model management** with automatic downloads and storage optimization
 - **Multi-format export system** supporting TXT, Markdown, JSON, CSV, SRT, VTT, XML
 - **Auto-copy functionality** with automatic clipboard integration
+- **Multi-language speech transcription** with bilingual output support (original + English translation)
 - **Advanced configuration system** with JSON files, environment variables, and CLI options
 - **Professional subtitle generation** in SRT and VTT formats
 - **Session metadata tracking** with detailed performance metrics
@@ -313,6 +314,7 @@ recognize -m base.en --export --export-format txt --export-no-metadata --export-
 
 ### Output Options
 - `-f, --file` - Output transcription to file
+- `-om, --output-mode` - Output mode: original, english, bilingual (default: original)
 - `-sa, --save-audio` - Save recorded audio to WAV file
 - `--no-timestamps` - Disable timestamp output (auto in continuous mode)
 - `-ps, --print-special` - Print special tokens
@@ -417,6 +419,7 @@ Configuration files use JSON format:
 - `save_audio` - Save recorded audio
 - `output` / `output_file` - Output file path
 - `format` / `output_format` - Output format (json, plain, timestamped)
+- `mode` / `output_mode` - Output mode: original, english, bilingual
 
 ### Auto-Copy Configuration
 - `auto_copy` / `auto_copy_enabled` - Enable/disable automatic clipboard copy when session ends
@@ -430,6 +433,78 @@ Configuration files use JSON format:
 - `export_include_metadata` - Include session metadata in exports (default: true)
 - `export_include_timestamps` - Include timestamps in exports (default: true)
 - `export_include_confidence` - Include confidence scores in exports (default: false)
+
+## Multi-Language Speech Transcription
+
+The CLI supports multi-language speech transcription with three output modes for seamless translation workflows:
+
+### Output Modes
+
+- **`original`** - Transcribe in the original spoken language only (default)
+- **`english`** - Translate everything to English only
+- **`bilingual`** - Show both original language and English translation side by side
+
+### Usage Examples
+
+```bash
+# Bilingual Chinese-English transcription
+recognize -m medium --output-mode bilingual -l zh
+
+# Japanese to English translation only
+recognize -m medium --output-mode english -l ja
+
+# Spanish transcription in original language
+recognize -m medium --output-mode original -l es
+
+# Set bilingual as default
+recognize config set output_mode bilingual
+recognize config set language zh
+recognize -m medium  # Uses configured defaults
+```
+
+### Output Format Examples
+
+**Bilingual Mode (with timestamps):**
+```
+[00:01.000 --> 00:02.500]  zh: 你好世界
+[00:01.000 --> 00:02.500]  en: Hello World
+[00:02.500 --> 00:04.000]  zh: 这是一个测试
+[00:02.500 --> 00:04.000]  en: This is a test
+```
+
+**Bilingual Mode (plain text):**
+```
+zh: 你好世界
+en: Hello World
+zh: 这是一个测试
+en: This is a test
+```
+
+**English-only Mode:**
+```
+[00:01.000 --> 00:02.500]  en: Hello World
+[00:02.500 --> 00:04.000]  en: This is a test
+```
+
+### Requirements for Multi-Language Features
+
+- **Multilingual models required**: Use models without `.en` suffix (e.g., `base`, `medium`, `large-v3`)
+- **Source language specification**: Use `-l` or `--language` with appropriate language code (e.g., `zh`, `es`, `fr`, `ja`)
+- **Two-pass processing**: Bilingual mode performs both transcription and translation for optimal accuracy
+
+### Supported Languages
+
+All Whisper-supported languages work with the multi-language features:
+- Chinese (`zh`), Japanese (`ja`), Korean (`ko`)
+- Spanish (`es`), French (`fr`), German (`de`), Italian (`it`)
+- Russian (`ru`), Arabic (`ar`), Hindi (`hi`)
+- And 90+ more languages
+
+### Performance Considerations
+
+- **Bilingual mode**: Approximately 2x processing time (runs two inference passes)
+- **English/Original modes**: Standard processing time (single inference pass)
+- **Model recommendations**: `medium` or `large-v3` for best translation quality
 
 ## Performance Tips
 
@@ -467,8 +542,15 @@ recognize -m base.en --step 500 --length 5000
 recognize -m base.en -f transcript.txt
 ```
 
-### Different language with translation
+### Multi-language transcription with bilingual output
 ```bash
+# Chinese with English translation (side by side)
+recognize -m base --output-mode bilingual -l zh
+
+# Spanish to English translation only
+recognize -m base --output-mode english -l es
+
+# Traditional translate flag (compatibility)
 recognize -m base -l es --translate
 ```
 

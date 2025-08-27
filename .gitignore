@@ -32,6 +32,7 @@ transcript*.txt
 .Trashes
 ehthumbs.db
 Thumbs.db
+voicemode
 
 # IDE/Editor files
 .vscode/
