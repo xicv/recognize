@@ -51,26 +51,34 @@ This is a macOS CLI application called `recognize` that provides real-time speec
 
 ### Core Components
 
-1. **Main Application** (`whisper-stream-coreml.cpp` → builds as `recognize`)
+1. **Main Application** (`recognize.cpp` → builds as `recognize`)
    - Entry point and command-line parsing
    - Real-time audio processing loop
    - Integration with whisper.cpp for transcription
    - Auto-copy functionality with session management and safety limits
+   - Export system integration with comprehensive format support
 
 2. **Model Manager** (`model_manager.h/cpp`)
    - Automatic model discovery and download
    - CoreML model management
    - Interactive model selection interface
    - Model registry with metadata (size, URLs, descriptions)
+   - Storage usage tracking and cleanup utilities
 
 3. **Configuration Manager** (`config_manager.h/cpp`)
    - Multi-layer configuration system:
      - Command-line arguments (highest priority)
      - Environment variables (`WHISPER_*` prefix)
-     - Project config file (`.whisper-config.json`)
+     - Project config file (`.whisper-config.json` or `config.json`)
      - User config file (`~/.recognize/config.json`)
    - JSON-based configuration persistence
    - Config validation and merging
+
+4. **Export Manager** (`export_manager.h/cpp`)
+   - Multi-format transcription export (TXT, Markdown, JSON, CSV, SRT, VTT, XML)
+   - Session metadata tracking
+   - Flexible output options with timestamps and confidence scores
+   - Auto-filename generation and custom file paths
 
 ### Key Features
 - **CoreML Acceleration**: Enabled by default on macOS for performance
@@ -164,6 +172,8 @@ recognize --export --export-format csv --export-include-confidence
 - Configuration files use JSON format with optional value types
 - Auto-copy uses macOS `pbcopy` command for clipboard integration
 - Auto-copy session tracking with unique session IDs and safety limits
+- Multi-language support with bilingual output modes (original, english, bilingual)
+- Comprehensive signal handling for graceful shutdown during recording
 
 ### Performance Recommendations
 - Use CoreML acceleration (enabled by default)
@@ -185,3 +195,7 @@ All configuration options support environment variables with `WHISPER_` prefix:
 - `WHISPER_AUTO_COPY` - Enable automatic clipboard copy
 - `WHISPER_AUTO_COPY_MAX_DURATION` - Max session duration (hours)
 - `WHISPER_AUTO_COPY_MAX_SIZE` - Max transcription size (bytes)
+- `WHISPER_EXPORT_ENABLED` - Enable automatic export
+- `WHISPER_EXPORT_FORMAT` - Default export format
+- `WHISPER_LANGUAGE` - Source language code
+- `WHISPER_OUTPUT_MODE` - Output mode (original, english, bilingual)

@@ -15,7 +15,6 @@ A macOS CLI for real-time speech recognition with CoreML acceleration, based on 
 - **Advanced configuration system** with JSON files, environment variables, and CLI options
 - **Professional subtitle generation** in SRT and VTT formats
 - **Session metadata tracking** with detailed performance metrics
-- **Native macOS GUI app** with configurable global hotkeys and menu bar integration
 
 ## Requirements
 
@@ -24,11 +23,6 @@ A macOS CLI for real-time speech recognition with CoreML acceleration, based on 
 - SDL2 library (`brew install sdl2`)
 - CMake (`brew install cmake`)
 - Models are downloaded automatically when needed
-
-### GUI App
-- macOS 11.0 or later (for SwiftUI)
-- Xcode 12.0 or later (for building)
-- Accessibility permissions (for global hotkeys)
 
 ## Building
 
@@ -51,139 +45,51 @@ make -j$(nproc)
 ### Available Make Targets
 ```bash
 make help          # Show all available commands
-make build         # Build the project
-make clean         # Clean build artifacts
-make test          # Test functionality
+
+# Build Commands
+make build         # Full build (configure + compile)
+make rebuild       # Quick rebuild (skip configure)
+make clean         # Remove build artifacts
+make fresh         # Clean + build
+
+# Dependencies
+make check-deps    # Check if dependencies are installed
+make install-deps  # Install dependencies via Homebrew
+
+# Run Commands
 make run           # Interactive model selection
-make run-vad       # Run in VAD mode (recommended)
+make run-model MODEL=base.en  # Run with specific model
+make run-vad       # Run VAD mode (recommended)
 make list-models   # Show available models
 
 # Model Management
 make list-downloaded    # Show downloaded models with details
-make show-storage      # Show storage usage summary
-make cleanup-models    # Remove orphaned model files
+make show-storage       # Show storage usage summary
+make cleanup-models     # Remove orphaned model files
 
 # Export Examples  
-make run-export-txt    # Transcribe with text export
-make run-export-md     # Transcribe with Markdown export
-make run-export-json   # Transcribe with JSON export
+make run-export-txt     # Transcribe with text export
+make run-export-md      # Transcribe with Markdown export
+make run-export-json    # Transcribe with JSON export
 
 # Configuration
 make config-list       # Show current configuration
-make config-reset      # Reset configuration to defaults
+make config-set KEY=value VALUE=value  # Set configuration
+make config-get KEY=key  # Get configuration
+make config-reset       # Reset to defaults
 
-# GUI App
-make app               # Build macOS GUI app (Release)
-make app-run           # Build and run GUI app (Debug)
-make app-clean         # Clean GUI app build artifacts
-make app-install       # Install GUI app to /Applications
+# Installation
+make install            # Install system-wide (/usr/local/bin)
+make install-user       # Install for current user (~/bin)
+make uninstall          # Remove system installation
+make package            # Create distribution package
+
+# Development
+make test               # Test basic functionality
+make stop               # Stop all running dev apps
+
 ```
 
-## macOS GUI App
-
-The Recognize app provides a native macOS experience with global hotkey support and menu bar integration.
-
-### Building the GUI App
-
-```bash
-# Build and install the GUI app
-make app-install
-
-# Or build and run for development
-make app-run
-```
-
-### Features
-
-- **Global Hotkeys**: Configurable keyboard shortcuts to start/stop recognition
-- **Menu Bar Integration**: Discrete menu bar icon with status and controls
-- **Configurable Hotkeys**: Customize modifier keys (⌘, ⇧, ⌃, ⌥) and key combinations
-- **Visual Feedback**: Icon changes to show recording status
-- **System Notifications**: Alerts when recording starts/stops
-- **Background Operation**: Runs silently without dock icon
-
-### Default Hotkey
-
-By default, the app uses **⌘⇧R** (Command+Shift+R) to toggle recognition.
-
-### Configuring Hotkeys
-
-1. Click the menu bar icon (microphone)
-2. Select "Preferences..."
-3. Choose your preferred modifier keys and key combination
-4. Click "Save" to apply changes
-
-#### Supported Modifiers
-- **Command (⌘)**: Primary modifier key
-- **Shift (⇧)**: Secondary modifier
-- **Control (⌃)**: Alternative modifier
-- **Option (⌥)**: Alternative modifier
-
-#### Supported Keys
-- **Letters**: A-Z
-- **Numbers**: 0-9
-- **Function Keys**: F1-F12
-- **Special Keys**: Space, Tab, Escape, Enter, Backspace, Delete
-
-#### Hotkey Validation
-- At least one modifier key is required
-- Reserved shortcuts (⌘Q, ⌘W) are blocked
-- Function keys can be used with any modifier combination
-- Letter/number keys require Command or Control modifier
-
-### Installation
-
-```bash
-# Build and install to /Applications
-make app-install
-
-# Launch from Spotlight
-# Search for "RecognizeHotkey" and press Enter
-```
-
-### Usage
-
-1. **Launch the App**: Open from Applications or Spotlight
-2. **Grant Permissions**: 
-   - Allow accessibility permissions for global hotkeys
-   - Allow microphone access for speech recognition
-3. **Start Recognition**: Press your configured hotkey (default: ⌘⇧R)
-4. **Stop Recognition**: Press the same hotkey again
-5. **View Results**: Transcription is automatically copied to clipboard
-
-### Menu Bar Controls
-
-- **Status Display**: Shows current hotkey and recording state
-- **Manual Trigger**: Click "Start/Stop Recognition" to toggle without hotkey
-- **Preferences**: Configure hotkey combinations
-- **Quit**: Exit the application
-
-### Accessibility Setup
-
-On first launch, you'll be prompted to grant accessibility permissions:
-
-1. Go to **System Preferences** > **Security & Privacy** > **Privacy**
-2. Select **Accessibility** from the left sidebar
-3. Click the lock to make changes
-4. Add **RecognizeHotkey** to the list
-5. Ensure the checkbox is enabled
-
-### Troubleshooting GUI App
-
-#### Hotkey Not Working
-- Check accessibility permissions in System Preferences
-- Verify the hotkey combination isn't conflicting with other apps
-- Try a different key combination in Preferences
-
-#### App Not Launching
-- Ensure macOS 11.0+ (for SwiftUI support)
-- Check console logs for error messages
-- Try rebuilding: `make app-clean && make app`
-
-#### Build Issues
-- Ensure Xcode is installed and up to date
-- Check Xcode command line tools: `xcode-select --install`
-- Verify project file integrity
 
 ## Usage
 
@@ -649,34 +555,6 @@ make list-models
 - **[README.md](README.md)** - This file (quick reference)
 - Run `make help` - Show all Makefile commands
 
-### GUI App Development
-
-#### Project Structure
-```
-RecognizeHotkey/
-├── RecognizeHotkeyApp.swift      # Main app and menu bar setup
-├── HotkeyManager.swift           # Global hotkey registration
-├── HotkeySettings.swift          # Settings model and UserDefaults
-├── PreferencesView.swift         # SwiftUI preferences interface
-├── CLIExecutor.swift             # CLI integration
-└── MenuBarView.swift             # Menu bar components
-```
-
-#### Build Commands
-```bash
-make app          # Release build
-make app-debug    # Debug build
-make app-run      # Build and run (Debug)
-make app-clean    # Clean build artifacts
-make app-install  # Install to /Applications
-```
-
-#### Development Notes
-- Uses SwiftUI for modern macOS interface design
-- Carbon API for global hotkey registration
-- UserDefaults for settings persistence
-- NSStatusItem for menu bar integration
-- Background app with LSUIElement=true (no dock icon)
 
 ## Troubleshooting
 
@@ -696,10 +574,3 @@ make app-install  # Install to /Applications
 - Use smaller model (tiny.en vs base.en)
 - Adjust thread count with `-t`
 - Try VAD mode with `--step 0`
-
-### GUI App Issues
-- **Hotkey conflicts**: Check other apps using same key combination
-- **Accessibility permissions**: Required for global hotkeys to work
-- **Microphone permissions**: Required for speech recognition
-- **Build errors**: Ensure Xcode and command line tools are installed
-- **SwiftUI issues**: Requires macOS 11.0+ for full SwiftUI support
