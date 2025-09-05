@@ -353,6 +353,25 @@ int process_audio_segment(struct whisper_context* ctx, struct whisper_context* c
     return 0;
 }
 
+// Print tokens with confidence-based colors
+void print_colored_tokens(whisper_context * ctx, int i_segment, const whisper_params& params) {
+    for (int j = 0; j < whisper_full_n_tokens(ctx, i_segment); ++j) {
+        if (params.print_special == false) {
+            const whisper_token id = whisper_full_get_token_id(ctx, i_segment, j);
+            if (id >= whisper_token_eot(ctx)) {
+                continue;
+            }
+        }
+
+        const char * text = whisper_full_get_token_text(ctx, i_segment, j);
+        const float  p    = whisper_full_get_token_p   (ctx, i_segment, j);
+
+        const int col = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(p, 3)*float(k_colors.size()))));
+
+        printf("%s%s%s", k_colors[col].c_str(), text, "\033[0m");
+    }
+}
+
 // Print bilingual results with proper formatting
 void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params, 
                              AutoCopySession& auto_copy_session, ExportSession& export_session) {
@@ -1185,8 +1204,24 @@ int main(int argc, char ** argv) {
                     printf("\n");
                 }
                 
-                // Use new bilingual printing function
-                print_bilingual_results(bilingual_results, params, auto_copy_session, export_session);
+                // Use colored token output if enabled, otherwise use segment-based output
+                if (params.print_colors) {
+                    // Print tokens directly from whisper context with colors
+                    const int n_segments = whisper_full_n_segments(ctx);
+                    for (int i = 0; i < n_segments; ++i) {
+                        if (!params.no_timestamps) {
+                            const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
+                            const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
+                            printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
+                        }
+                        
+                        print_colored_tokens(ctx, i, params);
+                        printf("\n");
+                    }
+                } else {
+                    // Use segment-based bilingual output
+                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session);
+                }
 
                 if (params.fname_out.length() > 0) {
                     fout << std::endl;
