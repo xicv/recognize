@@ -1,8 +1,0 @@
-README.md
-setup.py
-voiclaude.egg-info/PKG-INFO
-voiclaude.egg-info/SOURCES.txt
-voiclaude.egg-info/dependency_links.txt
-voiclaude.egg-info/entry_points.txt
-voiclaude.egg-info/requires.txt
-voiclaude.egg-info/top_level.txt
