@@ -2,6 +2,10 @@
 
 A macOS CLI for real-time speech recognition with CoreML acceleration, based on whisper.cpp's stream example.
 
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
 ## Features
 
 - **Real-time speech transcription** from microphone with low latency
