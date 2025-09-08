@@ -109,6 +109,7 @@ Common configuration options include:
 - `vad/vad_threshold` - Voice activity detection threshold
 - `threads` - Number of processing threads
 - `language` - Source language code
+- `tinydiarize/speaker_segmentation` - Enable speaker segmentation (requires tdrz model, default: false)
 - `auto_copy_enabled` - Enable/disable automatic clipboard copy
 - `auto_copy_max_duration_hours` - Max session duration before skipping auto-copy (default: 2)
 - `auto_copy_max_size_bytes` - Max transcription size before skipping auto-copy (default: 1MB)
@@ -175,6 +176,14 @@ recognize --export --export-format csv --export-include-confidence
 - Multi-language support with bilingual output modes (original, english, bilingual)
 - Comprehensive signal handling for graceful shutdown during recording
 
+### Code Structure
+- `recognize.cpp` - Main application entry point and audio processing loop
+- `model_manager.h/cpp` - Model discovery, download, and management
+- `config_manager.h/cpp` - Multi-layer configuration system
+- `export_manager.h/cpp` - Multi-format transcription export system
+- `whisper_params.h` - Parameter structures and validation
+- Uses whisper.cpp examples: `common.cpp`, `common-whisper.cpp`, `common-sdl.cpp`
+
 ### Performance Recommendations
 - Use CoreML acceleration (enabled by default)
 - VAD mode (`--step 0`) for real-time processing
@@ -185,6 +194,14 @@ recognize --export --export-format csv --export-include-confidence
 - `make dev` - Clean, build, and run (equivalent to `make fresh run`)
 - `make quick` - Rebuild and run (equivalent to `make rebuild run`)
 
+### Development Workflow
+1. **Initial setup**: `make install-deps && make build`
+2. **Code changes**: `make rebuild` to skip configure step
+3. **Testing**: `make test` for basic functionality check
+4. **Debug builds**: Edit CMakeLists.txt to change `CMAKE_BUILD_TYPE` to `Debug`
+5. **Model testing**: Use `make run-model MODEL=tiny.en` for faster iteration
+6. **Configuration testing**: Use `make config-set` and `make config-get` to test config system
+
 ### Environment Variables
 All configuration options support environment variables with `WHISPER_` prefix:
 - `WHISPER_MODEL` - Default model name
@@ -192,6 +209,7 @@ All configuration options support environment variables with `WHISPER_` prefix:
 - `WHISPER_COREML` - Enable/disable CoreML acceleration
 - `WHISPER_STEP_MS` - Audio processing step size
 - `WHISPER_VAD_THRESHOLD` - Voice activity detection threshold
+- `WHISPER_TINYDIARIZE` - Enable speaker segmentation (requires tdrz model)
 - `WHISPER_AUTO_COPY` - Enable automatic clipboard copy
 - `WHISPER_AUTO_COPY_MAX_DURATION` - Max session duration (hours)
 - `WHISPER_AUTO_COPY_MAX_SIZE` - Max transcription size (bytes)

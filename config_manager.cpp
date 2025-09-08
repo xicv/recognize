@@ -142,6 +142,7 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.print_special) params.print_special = *effective.print_special;
     if (effective.print_colors) params.print_colors = *effective.print_colors;
     if (effective.save_audio) params.save_audio = *effective.save_audio;
+    if (effective.tinydiarize) params.tinydiarize = *effective.tinydiarize;
     if (effective.output_file) params.fname_out = *effective.output_file;
     if (effective.output_mode) params.output_mode = *effective.output_mode;
     
@@ -187,6 +188,8 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"colors", "print_colors"},
         {"print_colors", "print_colors"},
         {"save_audio", "save_audio"},
+        {"tinydiarize", "tinydiarize"},
+        {"speaker_segmentation", "tinydiarize"},
         {"output", "output_file"},
         {"output_file", "output_file"},
         {"format", "output_format"},
@@ -286,6 +289,7 @@ void ConfigManager::list_config() const {
     std::cout << "  special (print_special)      : " << (effective.print_special ? (*effective.print_special ? "true" : "false") : "false") << " - Print special tokens\n";
     std::cout << "  colors (print_colors)        : " << (effective.print_colors ? (*effective.print_colors ? "true" : "false") : "false") << " - Print colors based on confidence\n";
     std::cout << "  save_audio                   : " << (effective.save_audio ? (*effective.save_audio ? "true" : "false") : "false") << " - Save recorded audio to WAV\n";
+    std::cout << "  tinydiarize                  : " << (effective.tinydiarize ? (*effective.tinydiarize ? "true" : "false") : "false") << " - Enable speaker segmentation (requires tdrz model)\n";
     std::cout << "  output (output_file)         : " << (effective.output_file ? *effective.output_file : "(none)") << " - Output file path\n";
     std::cout << "  format (output_format)       : " << (effective.output_format ? *effective.output_format : "plain") << " - Output format (json/plain/timestamped)\n";
     std::cout << "  mode (output_mode)           : " << (effective.output_mode ? *effective.output_mode : "original") << " - Output mode (original/english/bilingual)\n";
@@ -350,6 +354,7 @@ void ConfigManager::load_env_vars() {
     env_config_.print_special = get_env_bool("WHISPER_PRINT_SPECIAL");
     env_config_.print_colors = get_env_bool("WHISPER_PRINT_COLORS");
     env_config_.save_audio = get_env_bool("WHISPER_SAVE_AUDIO");
+    env_config_.tinydiarize = get_env_bool("WHISPER_TINYDIARIZE");
     env_config_.output_file = get_env_var("WHISPER_OUTPUT_FILE");
     env_config_.output_format = get_env_var("WHISPER_OUTPUT_FORMAT");
     
@@ -437,6 +442,7 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.print_special) merged.print_special = config.print_special;
         if (config.print_colors) merged.print_colors = config.print_colors;
         if (config.save_audio) merged.save_audio = config.save_audio;
+        if (config.tinydiarize) merged.tinydiarize = config.tinydiarize;
         if (config.output_file) merged.output_file = config.output_file;
         if (config.output_format) merged.output_format = config.output_format;
         if (config.output_mode) merged.output_mode = config.output_mode;
@@ -498,6 +504,7 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.print_special) add_bool("print_special", *config.print_special);
     if (config.print_colors) add_bool("print_colors", *config.print_colors);
     if (config.save_audio) add_bool("save_audio", *config.save_audio);
+    if (config.tinydiarize) add_bool("tinydiarize", *config.tinydiarize);
     if (config.output_file) add_field("output_file", *config.output_file);
     if (config.output_format) add_field("output_format", *config.output_format);
     if (config.output_mode) add_field("output_mode", *config.output_mode);
@@ -565,6 +572,7 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.print_special = get_bool("print_special");
     config.print_colors = get_bool("print_colors");
     config.save_audio = get_bool("save_audio");
+    config.tinydiarize = get_bool("tinydiarize");
     config.output_file = get_string("output_file");
     config.output_format = get_string("output_format");
     config.output_mode = get_string("output_mode");
@@ -642,6 +650,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "print_special") config.print_special = std::nullopt;
         else if (key == "print_colors") config.print_colors = std::nullopt;
         else if (key == "save_audio") config.save_audio = std::nullopt;
+        else if (key == "tinydiarize") config.tinydiarize = std::nullopt;
         else if (key == "output_file") config.output_file = std::nullopt;
         else if (key == "output_format") config.output_format = std::nullopt;
         else if (key == "output_mode") config.output_mode = std::nullopt;
@@ -708,6 +717,13 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
             else if (lower == "false" || lower == "0" || lower == "no") config.save_audio = false;
             else return false;
         }
+        else if (key == "tinydiarize") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.tinydiarize = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.tinydiarize = false;
+            else return false;
+        }
         else if (key == "output_file") config.output_file = value;
         else if (key == "output_format") config.output_format = value;
         else if (key == "output_mode") config.output_mode = value;
@@ -748,6 +764,7 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "print_special") return config.print_special ? std::make_optional(*config.print_special ? "true" : "false") : std::nullopt;
     else if (key == "print_colors") return config.print_colors ? std::make_optional(*config.print_colors ? "true" : "false") : std::nullopt;
     else if (key == "save_audio") return config.save_audio ? std::make_optional(*config.save_audio ? "true" : "false") : std::nullopt;
+    else if (key == "tinydiarize") return config.tinydiarize ? std::make_optional(*config.tinydiarize ? "true" : "false") : std::nullopt;
     else if (key == "output_file") return config.output_file;
     else if (key == "output_format") return config.output_format;
     else if (key == "output_mode") return config.output_mode;

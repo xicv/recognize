@@ -249,6 +249,32 @@ recognize -m base -l es --translate
 recognize -m base -l auto
 ```
 
+### 5. Speaker Segmentation Mode
+
+Detect when different people are speaking in conversations or meetings.
+
+```bash
+# Enable speaker segmentation (requires tdrz model)
+recognize -m small.en-tdrz --tinydiarize
+
+# Speaker segmentation with VAD for meetings
+recognize -m small.en-tdrz --tinydiarize --step 0 --length 30000
+
+# Save speaker-segmented transcription
+recognize -m small.en-tdrz --tinydiarize -f meeting.txt
+```
+
+**What you'll see:**
+```
+[00:00:00.000 --> 00:00:03.800]  Hello everyone, welcome to the meeting. [SPEAKER_TURN]
+[00:00:03.800 --> 00:00:07.200]  Thank you for having me. I'd like to discuss...
+```
+
+**Requirements:**
+- Models with `tdrz` suffix (e.g., `small.en-tdrz`)
+- Currently English-only
+- Automatically marks speaker changes with `[SPEAKER_TURN]`
+
 ## Advanced Configuration
 
 ### Audio Device Selection
@@ -455,6 +481,18 @@ recognize -m base.en -vth 0.4 --step 0 --length 10000
 recognize -m medium.en -f podcast.txt --no-timestamps false
 ```
 
+### Meeting with Multiple Speakers
+```bash
+# Detect speaker changes in meetings
+recognize -m small.en-tdrz --tinydiarize -f meeting.txt --step 0 --length 30000
+```
+
+### Interview Transcription
+```bash
+# Two-person interview with speaker detection
+recognize -m small.en-tdrz --tinydiarize --step 0 --length 15000 -vth 0.5
+```
+
 ---
 
 ## 🎤 Ready to Start?
@@ -463,5 +501,6 @@ recognize -m medium.en -f podcast.txt --no-timestamps false
 2. **Quick start**: `make run-model MODEL=base.en`
 3. **Best quality**: `make run-model MODEL=large`
 4. **Fastest**: `make run-model MODEL=tiny.en`
+5. **Speaker segmentation**: `make run-model MODEL=small.en-tdrz --tinydiarize`
 
 Enjoy real-time speech recognition with CoreML acceleration! 🚀

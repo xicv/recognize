@@ -31,6 +31,7 @@ struct ConfigData {
     std::optional<bool> print_special;
     std::optional<bool> print_colors;
     std::optional<bool> save_audio;
+    std::optional<bool> tinydiarize;
     
     // Output settings
     std::optional<std::string> output_file;

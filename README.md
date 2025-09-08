@@ -218,6 +218,13 @@ recognize -m base.en --export --export-format txt --export-no-metadata --export-
 - `--no-coreml` - Disable CoreML acceleration
 - `-cm, --coreml-model` - Specific CoreML model path
 
+### Speaker Segmentation Options
+- `-tdrz, --tinydiarize` - Enable speaker segmentation (requires tdrz model)
+- Speaker segmentation detects when different people are speaking and marks speaker turns
+- Requires models with `tdrz` suffix (e.g., `ggml-small.en-tdrz.bin`)
+- Currently supports English-only with small.en models
+- Output includes `[SPEAKER_TURN]` markers when speakers change
+
 ### Output Options
 - `-f, --file` - Output transcription to file
 - `-om, --output-mode` - Output mode: original, english, bilingual (default: original)
@@ -277,6 +284,7 @@ export WHISPER_COREML=true
 export WHISPER_VAD_THRESHOLD=0.7
 export WHISPER_STEP_MS=3000
 export WHISPER_LANGUAGE=en
+export WHISPER_TINYDIARIZE=true
 export WHISPER_AUTO_COPY=true
 export WHISPER_AUTO_COPY_MAX_DURATION=2
 export WHISPER_AUTO_COPY_MAX_SIZE=1048576
@@ -297,6 +305,7 @@ Configuration files use JSON format:
   "language": "en",
   "translate": false,
   "save_audio": false,
+  "tinydiarize": false,
   "auto_copy_enabled": true,
   "auto_copy_max_duration_hours": 2,
   "auto_copy_max_size_bytes": 1048576
@@ -323,6 +332,7 @@ Configuration files use JSON format:
 - `special` / `print_special` - Print special tokens
 - `colors` / `print_colors` - Print colors based on token confidence
 - `save_audio` - Save recorded audio
+- `tinydiarize` / `speaker_segmentation` - Enable speaker segmentation (requires tdrz model)
 - `output` / `output_file` - Output file path
 - `format` / `output_format` - Output format (json, plain, timestamped)
 - `mode` / `output_mode` - Output mode: original, english, bilingual
@@ -500,6 +510,22 @@ recognize --cleanup
 
 # Delete all models (nuclear option)
 recognize --delete-all-models
+```
+
+### Speaker Segmentation Examples
+```bash
+# Enable speaker segmentation with tdrz model
+recognize -m small.en-tdrz --tinydiarize
+
+# Speaker segmentation with VAD mode for meetings
+recognize -m small.en-tdrz --tinydiarize --step 0 --length 30000
+
+# Save speaker-segmented transcription to file
+recognize -m small.en-tdrz --tinydiarize -f meeting_transcript.txt
+
+# Configure speaker segmentation as default
+recognize config set tinydiarize true
+recognize config set model small.en-tdrz
 ```
 
 ### Export Examples
