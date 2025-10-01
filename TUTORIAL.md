@@ -9,9 +9,10 @@ A comprehensive guide to using the macOS CLI for real-time speech recognition wi
 3. [First Run](#first-run)
 4. [Model Management](#model-management)
 5. [Usage Modes](#usage-modes)
-6. [Advanced Configuration](#advanced-configuration)
-7. [Troubleshooting](#troubleshooting)
-8. [Development](#development)
+6. [Meeting Organization](#meeting-organization)
+7. [Advanced Configuration](#advanced-configuration)
+8. [Troubleshooting](#troubleshooting)
+9. [Development](#development)
 
 ## Quick Start
 
@@ -275,6 +276,230 @@ recognize -m small.en-tdrz --tinydiarize -f meeting.txt
 - Currently English-only
 - Automatically marks speaker changes with `[SPEAKER_TURN]`
 
+## Meeting Organization
+
+### AI-Powered Meeting Transcription
+
+Transform raw meeting transcriptions into professional, structured summaries using Claude CLI integration.
+
+### Quick Start with Meetings
+
+```bash
+# Basic meeting organization (most common use case)
+recognize --meeting
+
+# Custom filename for your meeting
+recognize --meeting --name project-review
+
+# Save to specific directory
+recognize --meeting --name ~/Documents/meetings/team-meeting.md
+```
+
+### Prerequisites for Meeting Organization
+
+**Required:**
+- Base CLI installation (see [Installation](#installation))
+- Microphone access for transcription
+
+**Optional (Recommended):**
+- Claude CLI for AI organization: `https://claude.ai/code`
+- Speaker segmentation model: `small.en-tdrz` for multi-speaker meetings
+
+### Meeting Organization Workflow
+
+1. **Recording Phase** 🎤
+   ```bash
+   recognize --meeting --name standup-meeting
+   ```
+   - Transcribes meeting in real-time
+   - Works with all existing features (VAD, speaker segmentation, translation)
+   - Captures clean transcription data for processing
+
+2. **Processing Phase** 🤖
+   - When you press `Ctrl-C` to end recording
+   - Automatically sends transcription to Claude CLI
+   - Uses comprehensive meeting organization prompt
+   - Falls back to raw transcription if Claude unavailable
+
+3. **Output Phase** 📋
+   - Generates professional meeting summary in markdown
+   - Includes action items, decisions, and metadata
+   - Saves to specified filename or auto-generated format
+
+### Meeting Organization Examples
+
+#### Basic Daily Standup
+```bash
+recognize --meeting --name daily-standup
+```
+**Output file:** `daily-standup.md`
+**Perfect for:** Quick team updates, task tracking
+
+#### Project Review Meeting
+```bash
+recognize --meeting --name project-review --output-mode english -m base.en
+```
+**Features:**
+- English translation for multilingual teams
+- Professional output format
+- Custom filename for easy reference
+
+#### Multi-Speaker Team Meeting
+```bash
+recognize --meeting --name team-meeting --tinydiarize -m small.en-tdrz --step 0
+```
+**Features:**
+- Speaker detection and labeling
+- Voice Activity Detection for efficiency
+- High-quality transcription
+
+#### Client Meeting with Translation
+```bash
+recognize --meeting --name client-call --output-mode bilingual -m medium -l auto
+```
+**Features:**
+- Bilingual output (original + English)
+- Auto-language detection
+- Professional quality model
+
+#### Board Meeting (High Quality)
+```bash
+recognize --meeting --name quarterly-review --tinydiarize -m medium.en
+```
+**Features:**
+- Maximum accuracy for important meetings
+- Speaker segmentation for multiple participants
+- Comprehensive documentation
+
+### Advanced Meeting Features
+
+#### Custom Prompts
+Create specialized meeting formats:
+```bash
+# Create custom prompt file
+cat > retrospective-prompt.txt << 'EOF'
+You are a sprint retrospective facilitator. Please organize this meeting transcription into:
+1. What went well during the sprint
+2. What didn't go well
+3. Action items for next sprint
+4. Team appreciation notes
+Focus on team dynamics and process improvements.
+EOF
+
+# Use custom prompt
+recognize --meeting --prompt retrospective-prompt.txt --name sprint-retro
+```
+
+#### Integration with Other Features
+
+**Meeting + Export:**
+```bash
+recognize --meeting --name all-hands --export --export-format json
+```
+- Gets AI-organized meeting summary
+- Also exports raw transcription data
+- Perfect for documentation and analysis
+
+**Meeting + Auto-Copy:**
+```bash
+recognize --meeting --name standup --auto-copy
+```
+- AI-organized meeting summary saved to file
+- Raw transcription automatically copied to clipboard
+- Quick sharing with team members
+
+**Meeting + Configuration:**
+```bash
+# Set meeting mode as default
+recognize config set meeting_mode true
+recognize config set meeting_name meeting-%Y-%m-%d.md
+
+# Now every session is a meeting
+recognize -m base.en  # Automatically creates meeting-2025-10-01.md
+```
+
+### Meeting Output Structure
+
+The AI-organized meeting summaries include:
+
+#### 📊 Meeting Metadata
+- **Meeting Title**: AI-generated descriptive title
+- **Date & Time**: Extracted from session
+- **Duration**: Calculated from transcription length
+- **Attendees**: Inferred from speaker patterns
+- **Meeting Type**: Detected (stand-up, planning, review, etc.)
+
+#### 🎯 Executive Summary
+- **Main Objective**: Primary meeting goal
+- **Key Outcomes**: 3-5 major results
+- **Critical Decisions**: Important decisions made
+- **Next Meeting**: Follow-up scheduling
+
+#### 📝 Detailed Discussion
+Organized by topics with:
+- **Discussion Points**: Key arguments and ideas
+- **Decisions Made**: Specific outcomes
+- **Action Items**: Tasks with owners and deadlines
+- **Owner & Deadline**: Assignment tracking
+
+#### ✅ Action Items Tracker
+| Task | Owner | Deadline | Status | Priority |
+|------|-------|----------|--------|----------|
+| [Specific task] | [Person] | [Date] | [Not Started/In Progress/Done] | [High/Medium/Low] |
+
+#### 🔍 Additional Analysis
+- **Key Decisions Log**: Decisions with rationale and impact
+- **Open Issues**: Problems raised and solutions proposed
+- **Follow-up Requirements**: Immediate, short-term, and long-term actions
+- **Quality Notes**: Meeting effectiveness and improvement suggestions
+
+### Troubleshooting Meeting Organization
+
+**Claude CLI Not Found:**
+```bash
+# Check if Claude CLI is available
+which claude
+
+# If not found, install from https://claude.ai/code
+# Meeting mode still works - saves raw transcription instead
+```
+
+**Poor Meeting Organization Quality:**
+- Ensure clear audio recording
+- Use appropriate microphone placement
+- Consider higher-quality model (`medium.en` vs `base.en`)
+- Enable speaker segmentation for multi-speaker meetings
+
+**Large Meeting Files:**
+- Meeting mode works with long sessions
+- Claude CLI handles large transcriptions
+- Consider splitting very long meetings (>2 hours)
+
+**Custom Prompt Not Working:**
+- Verify prompt file path exists
+- Check prompt file formatting
+- Test with shorter custom prompts first
+
+### Meeting Organization Best Practices
+
+#### Before the Meeting
+1. **Test Setup**: Run a quick test recording
+2. **Choose Model**: `base.en` for most cases, `medium.en` for important meetings
+3. **Speaker Segmentation**: Use `--tinydiarize` for multi-speaker meetings
+4. **File Naming**: Use descriptive names with dates
+
+#### During the Meeting
+1. **Microphone Placement**: Central location for group discussions
+2. **Speaker Identification**: Ask participants to introduce themselves
+3. **Pause Between Topics**: Helps AI identify discussion segments
+4. **Clear Speech**: Encourage participants to speak clearly
+
+#### After the Meeting
+1. **Review Output**: Check AI-organized summary for accuracy
+2. **Action Items**: Verify assigned tasks and deadlines
+3. **File Management**: Store meeting summaries in organized directory
+4. **Share with Team**: Distribute organized summary promptly
+
 ## Advanced Configuration
 
 ### Audio Device Selection
@@ -493,6 +718,27 @@ recognize -m small.en-tdrz --tinydiarize -f meeting.txt --step 0 --length 30000
 recognize -m small.en-tdrz --tinydiarize --step 0 --length 15000 -vth 0.5
 ```
 
+### AI-Organized Meetings
+```bash
+# Basic daily standup with AI organization
+recognize --meeting --name daily-standup
+
+# Project review with speaker segmentation
+recognize --meeting --name project-review --tinydiarize -m small.en-tdrz
+
+# Client meeting with bilingual output
+recognize --meeting --name client-call --output-mode bilingual -m medium -l auto
+
+# Sprint retrospective with custom prompt
+cat > retrospective.txt << 'EOF'
+Focus on: 1) What went well, 2) What didn't go well, 3) Action items, 4) Team appreciation
+EOF
+recognize --meeting --prompt retrospective.txt --name sprint-retro
+
+# Board meeting with maximum accuracy
+recognize --meeting --name quarterly-review --tinydiarize -m medium.en
+```
+
 ---
 
 ## 🎤 Ready to Start?
@@ -502,5 +748,6 @@ recognize -m small.en-tdrz --tinydiarize --step 0 --length 15000 -vth 0.5
 3. **Best quality**: `make run-model MODEL=large`
 4. **Fastest**: `make run-model MODEL=tiny.en`
 5. **Speaker segmentation**: `make run-model MODEL=small.en-tdrz --tinydiarize`
+6. **AI-organized meeting**: `recognize --meeting --name team-meeting`
 
 Enjoy real-time speech recognition with CoreML acceleration! 🚀

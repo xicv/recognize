@@ -58,4 +58,9 @@ struct whisper_params {
     bool export_include_metadata = true;
     bool export_include_timestamps = true;
     bool export_include_confidence = false;
+
+    // Meeting settings
+    bool meeting_mode = false;
+    std::string meeting_prompt = "";
+    std::string meeting_name = "";
 };

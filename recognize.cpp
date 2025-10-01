@@ -29,6 +29,115 @@
 std::atomic<bool> g_interrupt_received(false);
 std::atomic<bool> g_is_recording(false);
 
+// Default meeting organization prompt
+const std::string DEFAULT_MEETING_PROMPT = R"(
+You are an expert meeting organizer and transcription analyst. Please organize this raw meeting transcription into a structured, actionable format.
+
+## INPUT:
+Raw meeting transcription: [Paste raw transcription here]
+
+## OUTPUT REQUIREMENTS:
+
+### 1. MEETING METADATA
+- **Meeting Title**: Clear, descriptive title
+- **Date & Time**: [Extract from transcription]
+- **Duration**: [Estimate from content]
+- **Attendees**: [List all speakers/participants]
+- **Meeting Type**: [Stand-up, Planning, Review, Brainstorm, etc.]
+
+### 2. EXECUTIVE SUMMARY
+- **Main Objective**: What was the primary goal?
+- **Key Outcomes**: 3-5 bullet points of major results
+- **Critical Decisions**: Important decisions made
+- **Next Meeting**: [If mentioned]
+
+### 3. DETAILED AGENDA & DISCUSSION
+**Organize by topics discussed:**
+
+#### **Topic 1: [Topic Name]**
+- **Discussion Points**: [Key points raised]
+- **Decisions Made**: [Specific decisions]
+- **Action Items**: [Tasks assigned]
+- **Owner & Deadline**: [Who & when]
+
+#### **Topic 2: [Topic Name]**
+- [Repeat structure for each major topic]
+
+### 4. ACTION ITEMS TRACKER
+| Task | Owner | Deadline | Status | Priority |
+|------|-------|----------|--------|----------|
+| [Specific task] | [Person] | [Date] | [Not Started/In Progress/Done] | [High/Medium/Low] |
+
+### 5. KEY DECISIONS LOG
+1. **Decision**: [Clear statement]
+   - **Rationale**: [Reasoning behind decision]
+   - **Impact**: [What this affects]
+   - **Made by**: [Who decided]
+
+### 6. OPEN ISSUES & CONCERNS
+| Issue | Raised By | Impact | Proposed Solution |
+|-------|-----------|--------|------------------|
+| [Issue] | [Person] | [High/Medium/Low] | [Solution suggested] |
+
+### 7. FOLLOW-UP REQUIREMENTS
+- **Immediate Actions** (24-48 hours):
+- **Short-term** (1-2 weeks):
+- **Long-term** (1+ month):
+
+### 8. ADDITIONAL NOTES
+- **Resources Mentioned**: [Links, documents, tools]
+- **Budget/Financial Notes**: [If applicable]
+- **Stakeholders Not Present**: [Missing key people]
+- **Conflicts/Disagreements**: [Any tensions to resolve]
+
+### 9. QUALITY IMPROVEMENT NOTES
+- **Meeting Effectiveness**: [Rate 1-10, why?]
+- **Time Management**: [Was time well-used?]
+- **Participation**: [Was everyone engaged?]
+- **Suggestions for Improvement**: [What could be better?]
+
+## PROCESSING INSTRUCTIONS:
+
+1. **Clean the transcription** first:
+   - Remove filler words ("um", "uh", "like")
+   - Fix obvious transcription errors
+   - Identify different speakers
+   - Remove repetitive content
+
+2. **Identify structure**:
+   - Group related topics
+   - Extract key themes
+   - Note decision points
+   - Find action items
+
+3. **Clarify ambiguities**:
+   - Use [?] for unclear items
+   - Note when timestamps would help
+   - Mark items needing verification
+
+4. **Format professionally**:
+   - Use clear headings
+   - Be concise but thorough
+   - Prioritize action items
+   - Make it scannable
+
+5. **Add context**:
+   - Note meeting atmosphere
+   - Highlight urgency levels
+   - Flag time-sensitive items
+   - Identify dependencies
+
+Please organize this transcription systematically and make it immediately actionable for all participants. Make it clear, concise, and actionable.
+
+Pro Tips:
+
+1. Before pasting: Clean up obvious transcription errors
+2. For long meetings: Break into sections or topics
+3. For technical meetings: Ask to preserve technical terms
+4. For decision-heavy meetings: Emphasize the rationale section
+5. For action-oriented meetings: Focus on the action items tracker
+)";
+
 // Signal handler for graceful shutdown
 void signal_handler(int signal) {
     if (signal == SIGINT) {
@@ -86,7 +195,7 @@ struct ExportSession {
     std::chrono::high_resolution_clock::time_point start_time;
     std::vector<TranscriptionSegment> segments;
     SessionMetadata metadata;
-    
+
     ExportSession() {
         // Generate a unique session ID
         std::random_device rd;
@@ -94,6 +203,30 @@ struct ExportSession {
         std::uniform_int_distribution<> dis(100000, 999999);
         session_id = std::to_string(dis(gen));
         start_time = std::chrono::high_resolution_clock::now();
+    }
+};
+
+// Meeting session functionality
+struct MeetingSession {
+    std::string session_id;
+    std::chrono::high_resolution_clock::time_point start_time;
+    std::ostringstream transcription_buffer;
+
+    MeetingSession() {
+        // Generate a unique session ID
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(100000, 999999);
+        session_id = std::to_string(dis(gen));
+        start_time = std::chrono::high_resolution_clock::now();
+    }
+
+    void add_transcription(const std::string& text) {
+        transcription_buffer << text;
+    }
+
+    std::string get_transcription() const {
+        return transcription_buffer.str();
     }
 };
 
@@ -110,17 +243,115 @@ bool copy_to_clipboard_macos(const std::string& text) {
     if (text.empty()) {
         return false;
     }
-    
+
     // Use pbcopy on macOS to copy to clipboard
     FILE* pipe = popen("pbcopy", "w");
     if (!pipe) {
         return false;
     }
-    
+
     size_t written = fwrite(text.c_str(), 1, text.length(), pipe);
     int exit_code = pclose(pipe);
-    
+
     return (written == text.length() && exit_code == 0);
+}
+
+bool is_claude_cli_available() {
+    // Check if claude command is available in PATH
+    FILE* pipe = popen("which claude 2>/dev/null", "r");
+    if (!pipe) {
+        return false;
+    }
+
+    char buffer[256];
+    bool found = (fgets(buffer, sizeof(buffer), pipe) != nullptr);
+    pclose(pipe);
+
+    return found;
+}
+
+std::string generate_meeting_filename(const std::string& meeting_name) {
+    if (!meeting_name.empty()) {
+        // Use provided name (could be a path)
+        return meeting_name;
+    }
+
+    // Generate default filename with current date
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+
+    std::ostringstream oss;
+    oss << "meeting-";
+
+    // Format: YYYY-MM-DD
+    std::tm* tm_ptr = std::localtime(&time_t);
+    oss << std::put_time(tm_ptr, "%Y-%m-%d");
+    oss << ".md";
+
+    return oss.str();
+}
+
+bool process_meeting_transcription(const std::string& transcription, const std::string& prompt, const std::string& output_file) {
+    if (transcription.empty()) {
+        std::cerr << "Error: Empty transcription for meeting processing" << std::endl;
+        return false;
+    }
+
+    if (!is_claude_cli_available()) {
+        std::cerr << "Error: Claude CLI not found. Please install Claude Code first." << std::endl;
+        std::cerr << "Visit: https://claude.ai/code for installation instructions." << std::endl;
+        return false;
+    }
+
+    // Use the provided prompt or default
+    std::string effective_prompt = prompt.empty() ? DEFAULT_MEETING_PROMPT : prompt;
+
+    // Replace the placeholder in the prompt with actual transcription
+    std::string full_prompt = effective_prompt;
+    size_t placeholder_pos = full_prompt.find("[Paste raw transcription here]");
+    if (placeholder_pos != std::string::npos) {
+        full_prompt.replace(placeholder_pos, std::string("[Paste raw transcription here]").length(), transcription);
+    } else {
+        // If placeholder not found, append transcription
+        full_prompt += "\n\n## RAW TRANSCRIPTION:\n" + transcription;
+    }
+
+    // Construct the claude command
+    std::ostringstream cmd;
+    cmd << "claude -p \"" << full_prompt << "\"";
+
+    // Execute claude command and capture output
+    FILE* pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        std::cerr << "Error: Failed to execute Claude CLI" << std::endl;
+        return false;
+    }
+
+    // Read the output
+    std::ostringstream output;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output << buffer;
+    }
+
+    int exit_code = pclose(pipe);
+    if (exit_code != 0) {
+        std::cerr << "Error: Claude CLI execution failed with exit code " << exit_code << std::endl;
+        return false;
+    }
+
+    // Write output to file
+    std::ofstream file(output_file);
+    if (!file.is_open()) {
+        std::cerr << "Error: Cannot create meeting output file: " << output_file << std::endl;
+        return false;
+    }
+
+    file << output.str();
+    file.close();
+
+    std::cout << "✅ Meeting transcription processed and saved to: " << output_file << std::endl;
+    return true;
 }
 
 bool should_auto_copy(const AutoCopySession& session, const whisper_params& params) {
@@ -373,8 +604,8 @@ void print_colored_tokens(whisper_context * ctx, int i_segment, const whisper_pa
 }
 
 // Print bilingual results with proper formatting
-void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params, 
-                             AutoCopySession& auto_copy_session, ExportSession& export_session) {
+void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params,
+                             AutoCopySession& auto_copy_session, ExportSession& export_session, MeetingSession* meeting_session = nullptr) {
     
     for (const auto& seg : segments) {
         if (params.no_timestamps) {
@@ -391,7 +622,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << seg.original_text;
                 }
-                
+
                 // Add to export session
                 if (params.export_enabled) {
                     export_session.segments.emplace_back(
@@ -401,6 +632,11 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.speaker_turn
                     );
                 }
+
+                // Add to meeting session
+                if (meeting_session && params.meeting_mode) {
+                    meeting_session->add_transcription(seg.original_text);
+                }
             }
             else if (params.output_mode == "english") {
                 printf("%s", seg.english_text.c_str());
@@ -409,7 +645,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << seg.english_text;
                 }
-                
+
                 // Add to export session
                 if (params.export_enabled) {
                     export_session.segments.emplace_back(
@@ -418,6 +654,11 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.english_confidence,
                         seg.speaker_turn
                     );
+                }
+
+                // Add to meeting session
+                if (meeting_session && params.meeting_mode) {
+                    meeting_session->add_transcription(seg.english_text);
                 }
             }
             else if (params.output_mode == "bilingual") {
@@ -433,7 +674,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                     auto_copy_session.transcription_buffer << lang_code << ": " << seg.original_text << "\n";
                     auto_copy_session.transcription_buffer << "en: " << seg.english_text << "\n";
                 }
-                
+
                 // Add to export session (combine both texts)
                 if (params.export_enabled) {
                     std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
@@ -443,6 +684,14 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         (seg.original_confidence + seg.english_confidence) / 2.0f,
                         seg.speaker_turn
                     );
+                }
+
+                // Add to meeting session (clean format, just the content)
+                if (meeting_session && params.meeting_mode) {
+                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(" ");
+                    meeting_session->add_transcription(seg.english_text);
+                    meeting_session->add_transcription("\n");
                 }
             }
         }
@@ -461,7 +710,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                     if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
                     auto_copy_session.transcription_buffer << "\n";
                 }
-                
+
                 // Add to export session
                 if (params.export_enabled) {
                     export_session.segments.emplace_back(
@@ -471,6 +720,12 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.original_confidence,
                         seg.speaker_turn
                     );
+                }
+
+                // Add to meeting session (clean format, just the content)
+                if (meeting_session && params.meeting_mode) {
+                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(" ");
                 }
             }
             else if (params.output_mode == "english") {
@@ -484,7 +739,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                     if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
                     auto_copy_session.transcription_buffer << "\n";
                 }
-                
+
                 // Add to export session
                 if (params.export_enabled) {
                     export_session.segments.emplace_back(
@@ -494,6 +749,12 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.english_confidence,
                         seg.speaker_turn
                     );
+                }
+
+                // Add to meeting session (clean format, just the content)
+                if (meeting_session && params.meeting_mode) {
+                    meeting_session->add_transcription(seg.english_text);
+                    meeting_session->add_transcription(" ");
                 }
             }
             else if (params.output_mode == "bilingual") {
@@ -513,7 +774,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                     if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
                     auto_copy_session.transcription_buffer << "\n";
                 }
-                
+
                 // Add to export session (combine both texts)
                 if (params.export_enabled) {
                     std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
@@ -524,6 +785,14 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         (seg.original_confidence + seg.english_confidence) / 2.0f,
                         seg.speaker_turn
                     );
+                }
+
+                // Add to meeting session (clean format, just the content)
+                if (meeting_session && params.meeting_mode) {
+                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(" ");
+                    meeting_session->add_transcription(seg.english_text);
+                    meeting_session->add_transcription(" ");
                 }
             }
         }
@@ -657,6 +926,10 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "--export-no-metadata")              { params.export_include_metadata = false; }
         else if (arg == "--export-no-timestamps")            { params.export_include_timestamps = false; }
         else if (arg == "--export-include-confidence")       { params.export_include_confidence = true; }
+        // Meeting options
+        else if (arg == "--meeting")                         { params.meeting_mode = true; }
+        else if (arg == "--prompt")                          { params.meeting_prompt = argv[++i]; }
+        else if (arg == "--name")                            { params.meeting_name = argv[++i]; }
         // Config management options
         else if (arg == "config") {
             if (i + 1 < argc) {
@@ -774,6 +1047,11 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "            --export-no-timestamps  [%-7s] exclude timestamps from export\n",     params.export_include_timestamps ? "false" : "true");
     fprintf(stderr, "            --export-include-confidence [%-7s] include confidence scores in export\n", params.export_include_confidence ? "true" : "false");
     fprintf(stderr, "\n");
+    fprintf(stderr, "meeting organization:\n");
+    fprintf(stderr, "            --meeting        [%-7s] enable meeting transcription mode\n", params.meeting_mode ? "true" : "false");
+    fprintf(stderr, "            --prompt PROMPT  [%-7s] custom prompt for meeting organization\n", params.meeting_prompt.empty() ? "default" : "custom");
+    fprintf(stderr, "            --name NAME      [%-7s] output filename or path for meeting summary\n", params.meeting_name.empty() ? "auto-generated" : params.meeting_name.c_str());
+    fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models      list available models for download\n");
     fprintf(stderr, "            --list-downloaded  list downloaded models with sizes and paths\n");
@@ -807,6 +1085,10 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  %s config set model base.en           # set default model\n", argv[0]);
     fprintf(stderr, "  %s config set export_enabled true     # enable auto-export\n", argv[0]);
     fprintf(stderr, "  %s config list                        # show current config\n", argv[0]);
+    fprintf(stderr, "  %s --meeting                         # organize meeting transcription\n", argv[0]);
+    fprintf(stderr, "  %s --meeting --name project-review    # custom output filename\n", argv[0]);
+    fprintf(stderr, "  %s --meeting --name ~/docs/meeting.md # custom output path\n", argv[0]);
+    fprintf(stderr, "  %s --meeting --prompt custom.txt      # use custom prompt file\n", argv[0]);
     fprintf(stderr, "\n");
 }
 
@@ -1076,11 +1358,11 @@ int main(int argc, char ** argv) {
     // Initialize export session
     ExportSession export_session;
     if (params.export_enabled) {
-        printf("Export enabled (Session ID: %s, Format: %s, File: %s)\n", 
+        printf("Export enabled (Session ID: %s, Format: %s, File: %s)\n",
                export_session.session_id.c_str(),
                params.export_format.c_str(),
                params.export_auto_filename ? "auto-generated" : params.export_file.c_str());
-        
+
         // Setup session metadata
         export_session.metadata.session_id = export_session.session_id;
         export_session.metadata.start_time = std::chrono::system_clock::now();
@@ -1092,6 +1374,15 @@ int main(int argc, char ** argv) {
         export_session.metadata.step_ms = params.step_ms;
         export_session.metadata.length_ms = params.length_ms;
         export_session.metadata.version = "recognize-1.0.0";
+    }
+
+    // Initialize meeting session
+    MeetingSession meeting_session;
+    if (params.meeting_mode) {
+        std::string output_filename = generate_meeting_filename(params.meeting_name);
+        printf("Meeting mode enabled (Session ID: %s, Output: %s)\n",
+               meeting_session.session_id.c_str(), output_filename.c_str());
+        printf("Note: Transcription will be processed by Claude CLI when recording ends.\n");
     }
 
     auto t_last  = std::chrono::high_resolution_clock::now();
@@ -1220,7 +1511,7 @@ int main(int argc, char ** argv) {
                     }
                 } else {
                     // Use segment-based bilingual output
-                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session);
+                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session, &meeting_session);
                 }
 
                 if (params.fname_out.length() > 0) {
@@ -1264,7 +1555,31 @@ int main(int argc, char ** argv) {
     if (params.export_enabled) {
         perform_export(export_session, params);
     }
-    
+
+    // Perform meeting processing when session ends
+    if (params.meeting_mode) {
+        std::string meeting_output_file = generate_meeting_filename(params.meeting_name);
+        std::cout << "\n🚀 Processing meeting transcription with Claude CLI..." << std::endl;
+
+        bool success = process_meeting_transcription(
+            meeting_session.get_transcription(),
+            params.meeting_prompt,
+            meeting_output_file
+        );
+
+        if (!success) {
+            std::cout << "❌ Meeting processing failed. Transcription saved to raw_meeting_" << meeting_session.session_id << ".txt" << std::endl;
+            // Save raw transcription as fallback
+            std::string fallback_file = "raw_meeting_" + meeting_session.session_id + ".txt";
+            std::ofstream raw_file(fallback_file);
+            if (raw_file.is_open()) {
+                raw_file << meeting_session.get_transcription();
+                raw_file.close();
+                std::cout << "Raw transcription saved to: " << fallback_file << std::endl;
+            }
+        }
+    }
+
     // Clear recording state
     g_is_recording.store(false);
     
