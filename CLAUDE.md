@@ -57,6 +57,7 @@ This is a macOS CLI application called `recognize` that provides real-time speec
    - Integration with whisper.cpp for transcription
    - Auto-copy functionality with session management and safety limits
    - Export system integration with comprehensive format support
+   - Meeting organization mode with Claude CLI integration for AI-powered analysis
 
 2. **Model Manager** (`model_manager.h/cpp`)
    - Automatic model discovery and download
@@ -80,6 +81,13 @@ This is a macOS CLI application called `recognize` that provides real-time speec
    - Flexible output options with timestamps and confidence scores
    - Auto-filename generation and custom file paths
 
+5. **Meeting Organization System** (integrated in `recognize.cpp`)
+   - AI-powered transcription analysis using Claude CLI
+   - Structured meeting summary generation with metadata extraction
+   - Automatic speaker identification and action item extraction
+   - Fallback to raw transcription if Claude CLI unavailable
+   - Custom prompt support for specialized meeting types
+
 ### Key Features
 - **CoreML Acceleration**: Enabled by default on macOS for performance
 - **Voice Activity Detection (VAD)**: Use `--step 0` for efficient processing
@@ -88,6 +96,7 @@ This is a macOS CLI application called `recognize` that provides real-time speec
 - **Interactive Setup**: Guided model selection and download
 - **Auto-copy Functionality**: Automatic clipboard copy of transcription when session ends
 - **Export System**: Export transcriptions to multiple formats (TXT, Markdown, JSON, CSV, SRT, VTT, XML)
+- **Meeting Organization**: AI-powered meeting transcription analysis with Claude CLI integration
 
 ### Build System
 - **CMake**: Primary build system with CoreML and Metal support
@@ -118,6 +127,9 @@ Common configuration options include:
 - `export/include_metadata` - Include session metadata in exports (default: true)
 - `export/include_timestamps` - Include timestamps in exports (default: true)
 - `export/include_confidence` - Include confidence scores in exports (default: false)
+- `meeting_mode` - Enable AI-powered meeting organization (default: false)
+- `meeting_prompt` - Custom prompt file for meeting organization (default: built-in)
+- `meeting_name` - Custom output filename or path for meeting summary (default: auto-generated)
 
 ### Command Name
 The application builds as `recognize` (short, memorable command name) and should be referenced as such in documentation and examples, not as `./recognize` since it's designed to be installed system-wide.
@@ -175,6 +187,8 @@ recognize --export --export-format csv --export-include-confidence
 - Auto-copy session tracking with unique session IDs and safety limits
 - Multi-language support with bilingual output modes (original, english, bilingual)
 - Comprehensive signal handling for graceful shutdown during recording
+- Meeting organization feature integrates with Claude CLI for AI-powered transcription analysis
+- Meeting mode falls back to raw transcription if Claude CLI is not available
 
 ### Code Structure
 - `recognize.cpp` - Main application entry point and audio processing loop
@@ -201,6 +215,7 @@ recognize --export --export-format csv --export-include-confidence
 4. **Debug builds**: Edit CMakeLists.txt to change `CMAKE_BUILD_TYPE` to `Debug`
 5. **Model testing**: Use `make run-model MODEL=tiny.en` for faster iteration
 6. **Configuration testing**: Use `make config-set` and `make config-get` to test config system
+7. **Meeting feature testing**: Use `recognize --meeting` to test AI organization (requires Claude CLI)
 
 ### Environment Variables
 All configuration options support environment variables with `WHISPER_` prefix:
@@ -217,3 +232,39 @@ All configuration options support environment variables with `WHISPER_` prefix:
 - `WHISPER_EXPORT_FORMAT` - Default export format
 - `WHISPER_LANGUAGE` - Source language code
 - `WHISPER_OUTPUT_MODE` - Output mode (original, english, bilingual)
+- `WHISPER_MEETING` - Enable meeting organization mode
+- `WHISPER_MEETING_PROMPT` - Custom prompt file for meeting organization
+- `WHISPER_MEETING_NAME` - Output filename or path for meeting summary
+
+## Meeting Organization Feature
+
+The application includes AI-powered meeting organization that integrates with Claude CLI:
+
+### Usage
+```bash
+# Basic meeting organization
+recognize --meeting
+
+# Custom output location
+recognize --meeting --name project-review-meeting.md
+
+# Custom prompt for specialized meeting types
+recognize --meeting --prompt custom-meeting-prompt.txt
+```
+
+### How It Works
+1. **Records and transcribes** the meeting in real-time
+2. **On session end** (Ctrl-C), automatically sends transcription to Claude CLI
+3. **Claude processes** the raw transcription using a comprehensive prompt
+4. **Generates structured output** with:
+   - Meeting metadata (title, date, attendees, duration)
+   - Executive summary with key outcomes
+   - Detailed discussion topics
+   - Action items with owners and deadlines
+   - Next steps and follow-up items
+
+### Integration Notes
+- **Requires Claude CLI** (`https://claude.ai/code`) for AI processing
+- **Graceful fallback**: Saves raw transcription if Claude CLI unavailable
+- **Custom prompts**: Supports specialized meeting types (retrospectives, planning, etc.)
+- **File output**: Automatically generates timestamped filenames or accepts custom paths
