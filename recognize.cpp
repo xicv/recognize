@@ -24,6 +24,8 @@
 #include <atomic>
 #include <termios.h>
 #include <unistd.h>
+#include <filesystem>
+#include <iomanip>
 
 // Global state for signal handling
 std::atomic<bool> g_interrupt_received(false);
@@ -289,6 +291,27 @@ std::string generate_meeting_filename(const std::string& meeting_name) {
     oss << ".md";
 
     return oss.str();
+}
+
+std::string generate_fallback_filename() {
+    // Generate fallback filename with current date
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm* tm_ptr = std::localtime(&time_t);
+
+    std::ostringstream base_name;
+    base_name << std::put_time(tm_ptr, "%Y-%m-%d");
+    std::string base = base_name.str();
+    std::string filename = base + ".md";
+
+    // Check if file exists, add numeric suffix if needed
+    int suffix = 1;
+    while (std::filesystem::exists(filename)) {
+        filename = base + "-" + std::to_string(suffix) + ".md";
+        suffix++;
+    }
+
+    return filename;
 }
 
 bool process_meeting_transcription(const std::string& transcription, const std::string& prompt, const std::string& output_file) {
@@ -1568,14 +1591,25 @@ int main(int argc, char ** argv) {
         );
 
         if (!success) {
-            std::cout << "❌ Meeting processing failed. Transcription saved to raw_meeting_" << meeting_session.session_id << ".txt" << std::endl;
-            // Save raw transcription as fallback
-            std::string fallback_file = "raw_meeting_" + meeting_session.session_id + ".txt";
+            // Generate fallback filename with date-based naming
+            std::string fallback_file = generate_fallback_filename();
             std::ofstream raw_file(fallback_file);
             if (raw_file.is_open()) {
+                // Save raw transcription as markdown
+                auto now = std::chrono::system_clock::now();
+                auto time_t = std::chrono::system_clock::to_time_t(now);
+                std::tm* tm_ptr = std::localtime(&time_t);
+
+                raw_file << "# Meeting Transcription\n\n";
+                raw_file << "**Date**: " << std::put_time(tm_ptr, "%Y-%m-%d %H:%M") << "\n\n";
+                raw_file << "**Session ID**: " << meeting_session.session_id << "\n\n";
+                raw_file << "---\n\n";
+                raw_file << "## Raw Transcription\n\n";
                 raw_file << meeting_session.get_transcription();
                 raw_file.close();
-                std::cout << "Raw transcription saved to: " << fallback_file << std::endl;
+                std::cout << "✅ Transcription saved to: " << fallback_file << std::endl;
+            } else {
+                std::cout << "❌ Failed to save transcription to file" << std::endl;
             }
         }
     }
