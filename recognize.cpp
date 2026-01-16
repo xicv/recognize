@@ -272,29 +272,11 @@ bool is_claude_cli_available() {
     return found;
 }
 
-std::string generate_meeting_filename(const std::string& meeting_name) {
-    if (!meeting_name.empty()) {
-        // Use provided name (could be a path)
-        return meeting_name;
-    }
+std::string generate_meeting_filename([[maybe_unused]] const std::string& meeting_name) {
+    // Meeting mode always uses date-based naming: [YYYY]-[MM]-[DD].md
+    // If the filename exists, add numeric suffix: [YYYY]-[MM]-[DD]-1.md, [YYYY]-[MM]-[DD]-2.md, etc.
+    // The --name option is now ignored for meeting mode to ensure consistent date-based naming
 
-    // Generate default filename with current date
-    auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-
-    std::ostringstream oss;
-    oss << "meeting-";
-
-    // Format: YYYY-MM-DD
-    std::tm* tm_ptr = std::localtime(&time_t);
-    oss << std::put_time(tm_ptr, "%Y-%m-%d");
-    oss << ".md";
-
-    return oss.str();
-}
-
-std::string generate_fallback_filename() {
-    // Generate fallback filename with current date
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     std::tm* tm_ptr = std::localtime(&time_t);
@@ -312,6 +294,11 @@ std::string generate_fallback_filename() {
     }
 
     return filename;
+}
+
+std::string generate_fallback_filename() {
+    // Alias to generate_meeting_filename for backward compatibility
+    return generate_meeting_filename("");
 }
 
 bool process_meeting_transcription(const std::string& transcription, const std::string& prompt, const std::string& output_file) {
@@ -363,14 +350,22 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         return false;
     }
 
-    // Write output to file
+    // Write output to file with original transcription in HTML comments
     std::ofstream file(output_file);
     if (!file.is_open()) {
         std::cerr << "Error: Cannot create meeting output file: " << output_file << std::endl;
         return false;
     }
 
+    // Write the AI-organized output
     file << output.str();
+
+    // Append the original transcription in HTML comments
+    file << "\n\n<!--\n";
+    file << "## Original Raw Transcription\n\n";
+    file << transcription;
+    file << "\n-->\n";
+
     file.close();
 
     std::cout << "✅ Meeting transcription processed and saved to: " << output_file << std::endl;
@@ -1073,7 +1068,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "meeting organization:\n");
     fprintf(stderr, "            --meeting        [%-7s] enable meeting transcription mode\n", params.meeting_mode ? "true" : "false");
     fprintf(stderr, "            --prompt PROMPT  [%-7s] custom prompt for meeting organization\n", params.meeting_prompt.empty() ? "default" : "custom");
-    fprintf(stderr, "            --name NAME      [%-7s] output filename or path for meeting summary\n", params.meeting_name.empty() ? "auto-generated" : params.meeting_name.c_str());
+    fprintf(stderr, "            --name NAME      [%-7s] (deprecated: meeting mode always uses [YYYY]-[MM]-[DD].md naming)\n", params.meeting_name.empty() ? "ignored" : params.meeting_name.c_str());
     fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models      list available models for download\n");
@@ -1108,9 +1103,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  %s config set model base.en           # set default model\n", argv[0]);
     fprintf(stderr, "  %s config set export_enabled true     # enable auto-export\n", argv[0]);
     fprintf(stderr, "  %s config list                        # show current config\n", argv[0]);
-    fprintf(stderr, "  %s --meeting                         # organize meeting transcription\n", argv[0]);
-    fprintf(stderr, "  %s --meeting --name project-review    # custom output filename\n", argv[0]);
-    fprintf(stderr, "  %s --meeting --name ~/docs/meeting.md # custom output path\n", argv[0]);
+    fprintf(stderr, "  %s --meeting                         # organize meeting transcription (saves to [YYYY]-[MM]-[DD].md)\n", argv[0]);
     fprintf(stderr, "  %s --meeting --prompt custom.txt      # use custom prompt file\n", argv[0]);
     fprintf(stderr, "\n");
 }
@@ -1405,7 +1398,7 @@ int main(int argc, char ** argv) {
         std::string output_filename = generate_meeting_filename(params.meeting_name);
         printf("Meeting mode enabled (Session ID: %s, Output: %s)\n",
                meeting_session.session_id.c_str(), output_filename.c_str());
-        printf("Note: Transcription will be processed by Claude CLI when recording ends.\n");
+        printf("Note: Will save to [YYYY]-[MM]-[DD].md with AI organization (or raw transcription on failure).\n");
     }
 
     auto t_last  = std::chrono::high_resolution_clock::now();
@@ -1591,9 +1584,8 @@ int main(int argc, char ** argv) {
         );
 
         if (!success) {
-            // Generate fallback filename with date-based naming
-            std::string fallback_file = generate_fallback_filename();
-            std::ofstream raw_file(fallback_file);
+            // Fallback: save raw transcription to the same date-based filename
+            std::ofstream raw_file(meeting_output_file);
             if (raw_file.is_open()) {
                 // Save raw transcription as markdown
                 auto now = std::chrono::system_clock::now();
@@ -1607,7 +1599,7 @@ int main(int argc, char ** argv) {
                 raw_file << "## Raw Transcription\n\n";
                 raw_file << meeting_session.get_transcription();
                 raw_file.close();
-                std::cout << "✅ Transcription saved to: " << fallback_file << std::endl;
+                std::cout << "✅ Transcription saved to: " << meeting_output_file << std::endl;
             } else {
                 std::cout << "❌ Failed to save transcription to file" << std::endl;
             }

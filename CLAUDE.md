@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
 ## Project Overview
 
 This is a macOS CLI application called `recognize` that provides real-time speech recognition with CoreML acceleration. It's built on top of whisper.cpp and includes custom model management and configuration systems.
@@ -207,6 +211,7 @@ recognize --export --export-format csv --export-include-confidence
 ### Development Shortcuts
 - `make dev` - Clean, build, and run (equivalent to `make fresh run`)
 - `make quick` - Rebuild and run (equivalent to `make rebuild run`)
+- `make stop` - Stop all running recognize processes
 
 ### Development Workflow
 1. **Initial setup**: `make install-deps && make build`

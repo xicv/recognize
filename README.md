@@ -175,27 +175,22 @@ recognize -m base.en --export --export-format txt --export-no-metadata --export-
 # Basic meeting transcription with AI organization
 recognize --meeting
 
-# Custom output filename for meeting summary
-recognize --meeting --name project-review
-
-# Custom output path
-recognize --meeting --name ~/docs/meeting.md
-
 # Custom prompt file (advanced usage)
 recognize --meeting --prompt custom_prompt.txt
 
 # Meeting with specific model and output language
-recognize --meeting --name standup --output-mode english -m base.en
+recognize --meeting --output-mode english -m base.en
 
 # Meeting with speaker segmentation
-recognize --meeting --name team-meeting --tinydiarize -m small.en-tdrz
+recognize --meeting --tinydiarize -m small.en-tdrz
 ```
 
 **Meeting Organization Features:**
 - **Automatic AI Processing**: Raw transcription is processed by Claude CLI when recording ends
 - **Structured Output**: Generates professional meeting summaries with action items, decisions, and metadata
-- **Smart Fallback**: If Claude CLI unavailable, saves raw transcription with session ID
-- **Flexible Naming**: Auto-generates `meeting-YYYY-MM-DD.md` or use custom filename/path
+- **Smart Fallback**: If Claude CLI unavailable, saves raw transcription to same date-based file
+- **Date-Based Naming**: Always saves to `[YYYY]-[MM]-[DD].md` with automatic numeric suffix if file exists
+- **Original Content Preserved**: On success, raw transcription is wrapped in HTML comments `<!-- -->` in the output
 - **Default Prompt**: Comprehensive meeting organization template included
 - **Integration**: Works with all existing features (export, auto-copy, speaker segmentation)
 
@@ -239,9 +234,9 @@ recognize --meeting --name team-meeting --tinydiarize -m small.en-tdrz
 - `--auto-copy-max-size N` - Max transcription size in bytes before skipping auto-copy
 
 ### Meeting Organization Options
-- `--meeting` - Enable meeting transcription mode with AI organization
+- `--meeting` - Enable meeting transcription mode with AI organization (saves to `[YYYY]-[MM]-[DD].md`)
 - `--prompt TEXT` - Custom prompt for meeting organization (uses comprehensive default if not provided)
-- `--name PATH` - Output filename or path for meeting summary (auto-generates `meeting-YYYY-MM-DD.md` if not provided)
+- `--name PATH` - (Deprecated) Meeting mode always uses date-based naming `[YYYY]-[MM]-[DD].md` with numeric suffix
 
 ### Audio Options
 - `-c, --capture` - Audio capture device ID (default: -1 for default)
@@ -396,7 +391,7 @@ Configuration files use JSON format:
 ### Meeting Organization Configuration
 - `meeting_mode` - Enable/disable meeting transcription mode (default: false)
 - `meeting_prompt` - Custom prompt for meeting organization (uses comprehensive default if empty)
-- `meeting_name` - Default output filename or path for meeting summaries (auto-generates if empty)
+- `meeting_name` - (Deprecated) Meeting mode always uses date-based naming `[YYYY]-[MM]-[DD].md` with numeric suffix
 
 ## Multi-Language Speech Transcription
 
@@ -605,36 +600,29 @@ recognize -m base.en  # Will automatically export to JSON with confidence scores
 # Basic meeting transcription with AI-powered organization
 recognize --meeting
 
-# Project review meeting with custom filename
-recognize --meeting --name project-review-2025-10-01.md
-
 # Team standup with English translation and speaker segmentation
-recognize --meeting --name daily-standup --output-mode english --tinydiarize -m small.en-tdrz
+recognize --meeting --output-mode english --tinydiarize -m small.en-tdrz
 
 # Client meeting with high-quality model and bilingual output
-recognize --meeting --name client-meeting --output-mode bilingual -m medium -l auto
-
-# Save meeting to specific directory
-recognize --meeting --name ~/Documents/meetings/quarterly-review.md
+recognize --meeting --output-mode bilingual -m medium -l auto
 
 # Meeting with custom prompt for specialized format
-recognize --meeting --prompt ~/custom-meeting-prompt.txt --name board-meeting
+recognize --meeting --prompt ~/custom-meeting-prompt.txt
 
 # Configure meeting mode as default
 recognize config set meeting_mode true
-recognize config set meeting_name meeting-%Y-%m-%d.md
 recognize -m base.en  # Will automatically organize meetings
 
 # Combined meeting and export
-recognize --meeting --name all-hands --export --export-format json
+recognize --meeting --export --export-format json
 ```
 
 **Meeting Organization Workflow:**
 1. **Recording**: Transcribe meeting with any existing features (VAD, speaker segmentation, translation)
 2. **Processing**: When recording ends (Ctrl-C), automatically sends transcription to Claude CLI
 3. **Organization**: AI structures the raw transcription into professional meeting summary
-4. **Output**: Saves structured markdown with action items, decisions, and metadata
-5. **Fallback**: If Claude CLI unavailable, saves raw transcription with session ID
+4. **Output**: Saves to `[YYYY]-[MM]-[DD].md` with structured content and raw transcription in HTML comments
+5. **Fallback**: If Claude CLI unavailable, saves raw transcription to same date-based file
 
 **Meeting Output Includes:**
 - Meeting metadata (title, date, attendees, duration)
@@ -644,6 +632,7 @@ recognize --meeting --name all-hands --export --export-format json
 - Key decisions log with rationale
 - Open issues and follow-up requirements
 - Quality improvement notes
+- Original raw transcription in HTML comments `<!-- -->` (when AI processing succeeds)
 
 ## Available Models
 
