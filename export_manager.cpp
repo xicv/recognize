@@ -142,13 +142,15 @@ std::string ExportManager::export_txt() {
                    << segment.confidence << ")";
         }
         
-        if (segment.speaker_turn) {
+        if (segment.speaker_id >= 0) {
+            output << " [Speaker " << segment.speaker_id << "]";
+        } else if (segment.speaker_turn) {
             output << " [SPEAKER_TURN]";
         }
-        
+
         output << "\n";
     }
-    
+
     return output.str();
 }
 
@@ -188,10 +190,12 @@ std::string ExportManager::export_markdown() {
                    << segment.confidence << ")*";
         }
         
-        if (segment.speaker_turn) {
+        if (segment.speaker_id >= 0) {
+            output << " **[Speaker " << segment.speaker_id << "]**";
+        } else if (segment.speaker_turn) {
             output << " `[SPEAKER_TURN]`";
         }
-        
+
         output << "\n\n";
     }
     
@@ -214,6 +218,7 @@ std::string ExportManager::export_json() {
         output << "    \"language\": \"" << escape_json_string(metadata_.language) << "\",\n";
         output << "    \"duration_seconds\": " << metadata_.total_duration_seconds << ",\n";
         output << "    \"total_segments\": " << metadata_.total_segments << ",\n";
+        output << "    \"total_speakers\": " << metadata_.total_speakers << ",\n";
         output << "    \"coreml_enabled\": " << (metadata_.coreml_enabled ? "true" : "false") << ",\n";
         output << "    \"thread_count\": " << metadata_.thread_count << ",\n";
         output << "    \"vad_threshold\": " << metadata_.vad_threshold << ",\n";
@@ -238,10 +243,13 @@ std::string ExportManager::export_json() {
             output << ",\n      \"confidence\": " << segment.confidence;
         }
         
+        if (segment.speaker_id >= 0) {
+            output << ",\n      \"speaker_id\": " << segment.speaker_id;
+        }
         if (segment.speaker_turn) {
             output << ",\n      \"speaker_turn\": true";
         }
-        
+
         output << "\n    }";
         if (i < segments_.size() - 1) output << ",";
         output << "\n";

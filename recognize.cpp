@@ -26,118 +26,70 @@
 #include <unistd.h>
 #include <filesystem>
 #include <iomanip>
+#include <regex>
 
 // Global state for signal handling
 std::atomic<bool> g_interrupt_received(false);
 std::atomic<bool> g_is_recording(false);
 
 // Default meeting organization prompt
-const std::string DEFAULT_MEETING_PROMPT = R"(
-You are an expert meeting organizer and transcription analyst. Please organize this raw meeting transcription into a structured, actionable format.
+const std::string DEFAULT_MEETING_PROMPT = R"(Organize this raw meeting transcription into structured Markdown. Output only Markdown, no preamble.
 
 ## INPUT:
-Raw meeting transcription: [Paste raw transcription here]
+[Paste raw transcription here]
 
-## OUTPUT REQUIREMENTS:
+## INSTRUCTIONS:
 
-### 1. MEETING METADATA
-- **Meeting Title**: Clear, descriptive title
-- **Date & Time**: [Extract from transcription]
-- **Duration**: [Estimate from content]
-- **Attendees**: [List all speakers/participants]
-- **Meeting Type**: [Stand-up, Planning, Review, Brainstorm, etc.]
+1. Auto-classify meeting type: standup, planning, retrospective, brainstorm, 1-on-1, all-hands, or other.
+2. If [Speaker N] labels are present, attribute statements to speakers consistently.
+3. Clean filler words, fix transcription errors, remove repetitive content.
+4. Use [?] for unclear items needing verification.
 
-### 2. EXECUTIVE SUMMARY
-- **Main Objective**: What was the primary goal?
-- **Key Outcomes**: 3-5 bullet points of major results
-- **Critical Decisions**: Important decisions made
-- **Next Meeting**: [If mentioned]
+## OUTPUT FORMAT:
 
-### 3. DETAILED AGENDA & DISCUSSION
-**Organize by topics discussed:**
+# [Meeting Title]
 
-#### **Topic 1: [Topic Name]**
-- **Discussion Points**: [Key points raised]
-- **Decisions Made**: [Specific decisions]
-- **Action Items**: [Tasks assigned]
-- **Owner & Deadline**: [Who & when]
+**Type**: [auto-classified type] | **Attendees**: [speaker list or count]
 
-#### **Topic 2: [Topic Name]**
-- [Repeat structure for each major topic]
+## Summary
+3-5 bullet points of key outcomes.
 
-### 4. ACTION ITEMS TRACKER
-| Task | Owner | Deadline | Status | Priority |
-|------|-------|----------|--------|----------|
-| [Specific task] | [Person] | [Date] | [Not Started/In Progress/Done] | [High/Medium/Low] |
+## Discussion Topics
 
-### 5. KEY DECISIONS LOG
-1. **Decision**: [Clear statement]
-   - **Rationale**: [Reasoning behind decision]
-   - **Impact**: [What this affects]
-   - **Made by**: [Who decided]
+### [Topic 1]
+- Key points discussed
+- Decisions made
+- Action items with owners
 
-### 6. OPEN ISSUES & CONCERNS
-| Issue | Raised By | Impact | Proposed Solution |
-|-------|-----------|--------|------------------|
-| [Issue] | [Person] | [High/Medium/Low] | [Solution suggested] |
+### [Topic 2]
+[Repeat for each topic]
 
-### 7. FOLLOW-UP REQUIREMENTS
-- **Immediate Actions** (24-48 hours):
-- **Short-term** (1-2 weeks):
-- **Long-term** (1+ month):
+## Action Items
+| Task | Owner | Priority | Deadline |
+|------|-------|----------|----------|
+| [task] | [person] | High/Med/Low | [date if mentioned] |
 
-### 8. ADDITIONAL NOTES
-- **Resources Mentioned**: [Links, documents, tools]
-- **Budget/Financial Notes**: [If applicable]
-- **Stakeholders Not Present**: [Missing key people]
-- **Conflicts/Disagreements**: [Any tensions to resolve]
+## Decisions
+1. [Decision]: [rationale]
 
-### 9. QUALITY IMPROVEMENT NOTES
-- **Meeting Effectiveness**: [Rate 1-10, why?]
-- **Time Management**: [Was time well-used?]
-- **Participation**: [Was everyone engaged?]
-- **Suggestions for Improvement**: [What could be better?]
+## Open Issues
+- [Issue]: [proposed resolution]
 
-## PROCESSING INSTRUCTIONS:
+## Follow-up Email Draft
 
-1. **Clean the transcription** first:
-   - Remove filler words ("um", "uh", "like")
-   - Fix obvious transcription errors
-   - Identify different speakers
-   - Remove repetitive content
+Subject: [Meeting Title] - Summary & Action Items
 
-2. **Identify structure**:
-   - Group related topics
-   - Extract key themes
-   - Note decision points
-   - Find action items
+[Brief 3-sentence summary suitable for sending to participants]
 
-3. **Clarify ambiguities**:
-   - Use [?] for unclear items
-   - Note when timestamps would help
-   - Mark items needing verification
-
-4. **Format professionally**:
-   - Use clear headings
-   - Be concise but thorough
-   - Prioritize action items
-   - Make it scannable
-
-5. **Add context**:
-   - Note meeting atmosphere
-   - Highlight urgency levels
-   - Flag time-sensitive items
-   - Identify dependencies
-
-Please organize this transcription systematically and make it immediately actionable for all participants. Make it clear, concise, and actionable.
-
-Pro Tips:
-
-1. Before pasting: Clean up obvious transcription errors
-2. For long meetings: Break into sections or topics
-3. For technical meetings: Ask to preserve technical terms
-4. For decision-heavy meetings: Emphasize the rationale section
-5. For action-oriented meetings: Focus on the action items tracker
+<!-- meeting_metadata
+{
+  "title": "[meeting title]",
+  "type": "[classified type]",
+  "speakers": [count],
+  "action_items": [count],
+  "decisions": [count]
+}
+-->
 )";
 
 // Signal handler for graceful shutdown
@@ -213,6 +165,8 @@ struct MeetingSession {
     std::string session_id;
     std::chrono::high_resolution_clock::time_point start_time;
     std::ostringstream transcription_buffer;
+    int current_speaker_id = 1;
+    int total_speakers = 1;
 
     MeetingSession() {
         // Generate a unique session ID
@@ -223,12 +177,25 @@ struct MeetingSession {
         start_time = std::chrono::high_resolution_clock::now();
     }
 
-    void add_transcription(const std::string& text) {
+    void add_transcription(const std::string& text, bool speaker_turn = false) {
+        if (speaker_turn) {
+            current_speaker_id++;
+            if (current_speaker_id > total_speakers) {
+                total_speakers = current_speaker_id;
+            }
+            transcription_buffer << "\n[Speaker " << current_speaker_id << "] ";
+        }
         transcription_buffer << text;
     }
 
     std::string get_transcription() const {
         return transcription_buffer.str();
+    }
+
+    double get_duration_minutes() const {
+        auto now = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - start_time);
+        return duration.count() / 60.0;
     }
 };
 
@@ -272,16 +239,19 @@ bool is_claude_cli_available() {
     return found;
 }
 
-std::string generate_meeting_filename([[maybe_unused]] const std::string& meeting_name) {
-    // Meeting mode always uses date-based naming: [YYYY]-[MM]-[DD].md
-    // If the filename exists, add numeric suffix: [YYYY]-[MM]-[DD]-1.md, [YYYY]-[MM]-[DD]-2.md, etc.
-    // The --name option is now ignored for meeting mode to ensure consistent date-based naming
+std::string generate_meeting_filename(const std::string& meeting_name) {
+    // Date-based naming: [YYYY]-[MM]-[DD].md
+    // With --name: [name]-[YYYY]-[MM]-[DD].md
+    // If the filename exists, add numeric suffix: ...-1.md, ...-2.md, etc.
 
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     std::tm* tm_ptr = std::localtime(&time_t);
 
     std::ostringstream base_name;
+    if (!meeting_name.empty()) {
+        base_name << meeting_name << "-";
+    }
     base_name << std::put_time(tm_ptr, "%Y-%m-%d");
     std::string base = base_name.str();
     std::string filename = base + ".md";
@@ -301,7 +271,195 @@ std::string generate_fallback_filename() {
     return generate_meeting_filename("");
 }
 
-bool process_meeting_transcription(const std::string& transcription, const std::string& prompt, const std::string& output_file) {
+// Filter common whisper hallucination patterns from transcribed text
+std::string filter_hallucinations(const std::string& text) {
+    if (text.empty()) return text;
+
+    std::string filtered = text;
+
+    // Known phantom phrases that whisper hallucinates on silence/noise
+    static const std::vector<std::string> phantom_patterns = {
+        "Thank you for watching",
+        "Thanks for watching",
+        "Subscribe to my channel",
+        "Please subscribe",
+        "Like and subscribe",
+        "Thank you for listening",
+        "Thanks for listening",
+        "www.",
+        "http://",
+        "https://",
+        "[BLANK_AUDIO]",
+        "(upbeat music)",
+        "(dramatic music)",
+        "(gentle music)",
+        "(soft music)",
+        "[silence]",
+        "[Music]",
+        "(music)",
+        "you",  // common single-word hallucination on silence - only remove if it's the entire text
+    };
+
+    // Trim whitespace first
+    std::string trimmed = filtered;
+    size_t start = trimmed.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    size_t end = trimmed.find_last_not_of(" \t\n\r");
+    trimmed = trimmed.substr(start, end - start + 1);
+
+    // Check if entire text is a single phantom phrase (case-insensitive)
+    std::string lower_trimmed = trimmed;
+    std::transform(lower_trimmed.begin(), lower_trimmed.end(), lower_trimmed.begin(), ::tolower);
+
+    for (const auto& pattern : phantom_patterns) {
+        std::string lower_pattern = pattern;
+        std::transform(lower_pattern.begin(), lower_pattern.end(), lower_pattern.begin(), ::tolower);
+
+        // If entire trimmed text matches a phantom pattern, filter it out
+        if (lower_trimmed == lower_pattern) {
+            return "";
+        }
+
+        // If text starts with a URL pattern, filter it
+        if ((pattern == "www." || pattern == "http://" || pattern == "https://") &&
+            lower_trimmed.find(lower_pattern) == 0) {
+            return "";
+        }
+    }
+
+    // Detect repeated sentences (same sentence 3+ times → remove duplicates)
+    // Split by sentence-ending punctuation
+    std::vector<std::string> sentences;
+    std::string current;
+    for (char c : filtered) {
+        current += c;
+        if (c == '.' || c == '!' || c == '?') {
+            std::string s = current;
+            size_t s_start = s.find_first_not_of(" \t\n\r");
+            if (s_start != std::string::npos) {
+                s = s.substr(s_start);
+            }
+            if (!s.empty()) {
+                sentences.push_back(s);
+            }
+            current.clear();
+        }
+    }
+    if (!current.empty()) {
+        std::string s = current;
+        size_t s_start = s.find_first_not_of(" \t\n\r");
+        if (s_start != std::string::npos) {
+            sentences.push_back(s.substr(s_start));
+        }
+    }
+
+    // Count consecutive repetitions and deduplicate
+    if (sentences.size() >= 3) {
+        std::vector<std::string> deduped;
+        for (size_t idx = 1; idx < sentences.size(); idx++) {
+            if (sentences[idx] != sentences[idx - 1]) {
+                deduped.push_back(sentences[idx - 1]);
+            }
+        }
+        deduped.push_back(sentences.back());
+
+        if (deduped.size() < sentences.size()) {
+            std::string result;
+            for (const auto& s : deduped) {
+                result += s;
+            }
+            return result;
+        }
+    }
+
+    return filtered;
+}
+
+// Count words in a string
+static int count_words(const std::string& text) {
+    int count = 0;
+    bool in_word = false;
+    for (char c : text) {
+        if (std::isspace(c)) {
+            in_word = false;
+        } else if (!in_word) {
+            in_word = true;
+            count++;
+        }
+    }
+    return count;
+}
+
+// Split text into roughly equal chunks by word count, breaking at sentence boundaries
+static std::vector<std::string> split_into_chunks(const std::string& text, int max_words_per_chunk) {
+    std::vector<std::string> chunks;
+    std::istringstream stream(text);
+    std::string current_chunk;
+    int word_count = 0;
+    std::string word;
+
+    while (stream >> word) {
+        if (!current_chunk.empty()) {
+            current_chunk += " ";
+        }
+        current_chunk += word;
+        word_count++;
+
+        // Check if we've hit the limit and we're at a sentence boundary
+        bool at_sentence_end = (!word.empty() && (word.back() == '.' || word.back() == '!' || word.back() == '?'));
+        if (word_count >= max_words_per_chunk && at_sentence_end) {
+            chunks.push_back(current_chunk);
+            current_chunk.clear();
+            word_count = 0;
+        }
+    }
+
+    if (!current_chunk.empty()) {
+        chunks.push_back(current_chunk);
+    }
+
+    return chunks;
+}
+
+// Execute Claude CLI with a prompt string, return output. Uses temp file for safety.
+static std::string invoke_claude_cli(const std::string& prompt_text, int timeout_seconds) {
+    char temp_path[] = "/tmp/recognize_meeting_XXXXXX";
+    int temp_fd = mkstemp(temp_path);
+    if (temp_fd == -1) return "";
+
+    ssize_t written = write(temp_fd, prompt_text.c_str(), prompt_text.size());
+    close(temp_fd);
+
+    if (written < 0 || static_cast<size_t>(written) != prompt_text.size()) {
+        std::filesystem::remove(temp_path);
+        return "";
+    }
+
+    std::ostringstream cmd;
+    cmd << "timeout " << timeout_seconds << " sh -c 'cat \"" << temp_path << "\" | claude -p -'";
+
+    FILE* pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        std::filesystem::remove(temp_path);
+        return "";
+    }
+
+    std::ostringstream output;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output << buffer;
+    }
+
+    int exit_code = pclose(pipe);
+    std::filesystem::remove(temp_path);
+
+    if (exit_code != 0) return "";
+    return output.str();
+}
+
+bool process_meeting_transcription(const std::string& transcription, const std::string& prompt,
+                                    const std::string& output_file, int timeout_seconds = 120,
+                                    double duration_minutes = 0.0, int max_single_pass = 20000) {
     if (transcription.empty()) {
         std::cerr << "Error: Empty transcription for meeting processing" << std::endl;
         return false;
@@ -313,41 +471,99 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         return false;
     }
 
-    // Use the provided prompt or default
-    std::string effective_prompt = prompt.empty() ? DEFAULT_MEETING_PROMPT : prompt;
-
-    // Replace the placeholder in the prompt with actual transcription
-    std::string full_prompt = effective_prompt;
-    size_t placeholder_pos = full_prompt.find("[Paste raw transcription here]");
-    if (placeholder_pos != std::string::npos) {
-        full_prompt.replace(placeholder_pos, std::string("[Paste raw transcription here]").length(), transcription);
+    // Resolve prompt: if it's a file path, read its contents
+    std::string effective_prompt;
+    if (!prompt.empty() && std::filesystem::exists(prompt) && std::filesystem::is_regular_file(prompt)) {
+        std::ifstream prompt_file(prompt);
+        if (prompt_file.is_open()) {
+            effective_prompt = std::string((std::istreambuf_iterator<char>(prompt_file)),
+                                            std::istreambuf_iterator<char>());
+            std::cout << "Using custom prompt from file: " << prompt << std::endl;
+        } else {
+            std::cerr << "Warning: Could not read prompt file '" << prompt << "', using default prompt" << std::endl;
+            effective_prompt = DEFAULT_MEETING_PROMPT;
+        }
+    } else if (!prompt.empty()) {
+        effective_prompt = prompt;
     } else {
-        // If placeholder not found, append transcription
-        full_prompt += "\n\n## RAW TRANSCRIPTION:\n" + transcription;
+        effective_prompt = DEFAULT_MEETING_PROMPT;
     }
 
-    // Construct the claude command
-    std::ostringstream cmd;
-    cmd << "claude -p \"" << full_prompt << "\"";
-
-    // Execute claude command and capture output
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
-        std::cerr << "Error: Failed to execute Claude CLI" << std::endl;
-        return false;
+    // Format duration string
+    std::string duration_info;
+    if (duration_minutes > 0.0) {
+        std::ostringstream duration_str;
+        int hours = static_cast<int>(duration_minutes) / 60;
+        int mins = static_cast<int>(duration_minutes) % 60;
+        if (hours > 0) {
+            duration_str << hours << "h " << mins << "m";
+        } else {
+            duration_str << mins << "m";
+        }
+        duration_info = "\n\n## MEETING DURATION: " + duration_str.str() + "\n";
     }
 
-    // Read the output
-    std::ostringstream output;
-    char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output << buffer;
-    }
+    int word_count = count_words(transcription);
+    std::string final_output;
 
-    int exit_code = pclose(pipe);
-    if (exit_code != 0) {
-        std::cerr << "Error: Claude CLI execution failed with exit code " << exit_code << std::endl;
-        return false;
+    if (word_count > max_single_pass) {
+        // Multi-pass mode for long meetings
+        std::cout << "Long meeting detected (" << word_count << " words). Using multi-pass summarization..." << std::endl;
+
+        auto chunks = split_into_chunks(transcription, max_single_pass);
+        std::cout << "Split into " << chunks.size() << " chunks for processing." << std::endl;
+
+        // Pass 1: Extract structured data from each chunk
+        std::string combined_extracts;
+        for (size_t idx = 0; idx < chunks.size(); idx++) {
+            std::cout << "Processing chunk " << (idx + 1) << "/" << chunks.size() << "..." << std::endl;
+
+            std::string chunk_prompt = "Extract action items, decisions, key topics, and speaker attributions from this meeting transcript chunk ("
+                + std::to_string(idx + 1) + "/" + std::to_string(chunks.size())
+                + "). Output as concise bullet points grouped by topic. Preserve speaker labels.\n\n"
+                + chunks[idx];
+
+            std::string chunk_result = invoke_claude_cli(chunk_prompt, timeout_seconds);
+            if (chunk_result.empty()) {
+                std::cerr << "Warning: Failed to process chunk " << (idx + 1) << std::endl;
+                combined_extracts += "\n## Chunk " + std::to_string(idx + 1) + " (raw):\n" + chunks[idx] + "\n";
+            } else {
+                combined_extracts += "\n## Chunk " + std::to_string(idx + 1) + " extracts:\n" + chunk_result + "\n";
+            }
+        }
+
+        // Pass 2: Generate full summary from extracted data
+        std::cout << "Generating final summary from extracted data..." << std::endl;
+        std::string pass2_prompt = effective_prompt;
+        size_t placeholder_pos = pass2_prompt.find("[Paste raw transcription here]");
+        if (placeholder_pos != std::string::npos) {
+            pass2_prompt.replace(placeholder_pos, std::string("[Paste raw transcription here]").length(), combined_extracts);
+        } else {
+            pass2_prompt += "\n\n## EXTRACTED MEETING DATA:\n" + combined_extracts;
+        }
+        pass2_prompt += duration_info;
+
+        final_output = invoke_claude_cli(pass2_prompt, timeout_seconds);
+        if (final_output.empty()) {
+            std::cerr << "Error: Failed to generate final summary" << std::endl;
+            return false;
+        }
+    } else {
+        // Single-pass mode
+        std::string full_prompt = effective_prompt;
+        size_t placeholder_pos = full_prompt.find("[Paste raw transcription here]");
+        if (placeholder_pos != std::string::npos) {
+            full_prompt.replace(placeholder_pos, std::string("[Paste raw transcription here]").length(), transcription);
+        } else {
+            full_prompt += "\n\n## RAW TRANSCRIPTION:\n" + transcription;
+        }
+        full_prompt += duration_info;
+
+        final_output = invoke_claude_cli(full_prompt, timeout_seconds);
+        if (final_output.empty()) {
+            std::cerr << "Error: Claude CLI failed to produce output" << std::endl;
+            return false;
+        }
     }
 
     // Write output to file with original transcription in HTML comments
@@ -357,18 +573,14 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         return false;
     }
 
-    // Write the AI-organized output
-    file << output.str();
-
-    // Append the original transcription in HTML comments
+    file << final_output;
     file << "\n\n<!--\n";
     file << "## Original Raw Transcription\n\n";
     file << transcription;
     file << "\n-->\n";
-
     file.close();
 
-    std::cout << "✅ Meeting transcription processed and saved to: " << output_file << std::endl;
+    std::cout << "Meeting transcription processed and saved to: " << output_file << std::endl;
     return true;
 }
 
@@ -441,6 +653,7 @@ struct BilingualSegment {
     float original_confidence;
     float english_confidence;
     bool speaker_turn;
+    int speaker_id = -1;
 };
 
 // Process audio with bilingual output support
@@ -463,7 +676,31 @@ int process_audio_segment(struct whisper_context* ctx, struct whisper_context* c
     wparams.audio_ctx        = params.audio_ctx;
     wparams.tdrz_enable      = params.tinydiarize;
     wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
-    
+
+    // Apply accuracy settings
+    if (!params.initial_prompt.empty()) {
+        wparams.initial_prompt = params.initial_prompt.c_str();
+        if (params.meeting_mode) {
+            wparams.carry_initial_prompt = true;
+        }
+    }
+    if (!params.suppress_regex.empty()) {
+        wparams.suppress_regex = params.suppress_regex.c_str();
+    }
+    if (params.meeting_mode) {
+        wparams.suppress_nst = true;
+        wparams.no_speech_thold = 0.7f;
+        wparams.entropy_thold = 2.0f;
+    }
+    if (!params.vad_model_path.empty()) {
+        wparams.vad = true;
+        wparams.vad_model_path = params.vad_model_path.c_str();
+        if (params.meeting_mode) {
+            wparams.vad_params.min_silence_duration_ms = 2000;
+            wparams.vad_params.speech_pad_ms = 400;
+        }
+    }
+
     bilingual_results.clear();
     
     if (params.output_mode == "original") {
@@ -621,11 +858,24 @@ void print_colored_tokens(whisper_context * ctx, int i_segment, const whisper_pa
     }
 }
 
+// Speaker ID counter for export (persists across calls within a session)
+static int g_export_speaker_id = 1;
+static int g_export_total_speakers = 1;
+
 // Print bilingual results with proper formatting
 void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params,
                              AutoCopySession& auto_copy_session, ExportSession& export_session, MeetingSession* meeting_session = nullptr) {
-    
+
     for (const auto& seg : segments) {
+        // Track speaker IDs for export
+        int seg_speaker_id = g_export_speaker_id;
+        if (seg.speaker_turn) {
+            g_export_speaker_id++;
+            if (g_export_speaker_id > g_export_total_speakers) {
+                g_export_total_speakers = g_export_speaker_id;
+            }
+            seg_speaker_id = g_export_speaker_id;
+        }
         if (params.no_timestamps) {
             // Plain text mode
             if (params.output_mode == "original") {
@@ -647,18 +897,19 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         0, 0,
                         seg.original_text,
                         seg.original_confidence,
-                        seg.speaker_turn
+                        seg.speaker_turn,
+                        seg.speaker_turn ? seg_speaker_id : -1
                     );
                 }
 
                 // Add to meeting session
                 if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
                 }
             }
             else if (params.output_mode == "english") {
                 printf("%s", seg.english_text.c_str());
-                
+
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << seg.english_text;
@@ -670,13 +921,14 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         0, 0,
                         seg.english_text,
                         seg.english_confidence,
-                        seg.speaker_turn
+                        seg.speaker_turn,
+                        seg.speaker_turn ? seg_speaker_id : -1
                     );
                 }
 
                 // Add to meeting session
                 if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.english_text);
+                    meeting_session->add_transcription(seg.english_text, seg.speaker_turn);
                 }
             }
             else if (params.output_mode == "bilingual") {
@@ -700,13 +952,14 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         0, 0,
                         combined_text,
                         (seg.original_confidence + seg.english_confidence) / 2.0f,
-                        seg.speaker_turn
+                        seg.speaker_turn,
+                        seg.speaker_turn ? seg_speaker_id : -1
                     );
                 }
 
                 // Add to meeting session (clean format, just the content)
                 if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
                     meeting_session->add_transcription(" ");
                     meeting_session->add_transcription(seg.english_text);
                     meeting_session->add_transcription("\n");
@@ -736,13 +989,14 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.t1 / 10,
                         seg.original_text,
                         seg.original_confidence,
-                        seg.speaker_turn
+                        seg.speaker_turn,
+                        seg.speaker_turn ? seg_speaker_id : -1
                     );
                 }
 
                 // Add to meeting session (clean format, just the content)
                 if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
                     meeting_session->add_transcription(" ");
                 }
             }
@@ -750,7 +1004,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 printf("%s%s", timestamp_prefix.c_str(), seg.english_text.c_str());
                 if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
                 printf("\n");
-                
+
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << timestamp_prefix << seg.english_text;
@@ -765,13 +1019,14 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.t1 / 10,
                         seg.english_text,
                         seg.english_confidence,
-                        seg.speaker_turn
+                        seg.speaker_turn,
+                        seg.speaker_turn ? seg_speaker_id : -1
                     );
                 }
 
                 // Add to meeting session (clean format, just the content)
                 if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.english_text);
+                    meeting_session->add_transcription(seg.english_text, seg.speaker_turn);
                     meeting_session->add_transcription(" ");
                 }
             }
@@ -779,12 +1034,12 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 // Detect language for prefixes
                 std::string lang_code = params.language;
                 if (lang_code == "auto") lang_code = "orig";
-                
+
                 printf("%s%s: %s\n", timestamp_prefix.c_str(), lang_code.c_str(), seg.original_text.c_str());
                 printf("%sen: %s", timestamp_prefix.c_str(), seg.english_text.c_str());
                 if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
                 printf("\n");
-                
+
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << timestamp_prefix << lang_code << ": " << seg.original_text << "\n";
@@ -801,20 +1056,21 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                         seg.t1 / 10,
                         combined_text,
                         (seg.original_confidence + seg.english_confidence) / 2.0f,
-                        seg.speaker_turn
+                        seg.speaker_turn,
+                        seg.speaker_turn ? seg_speaker_id : -1
                     );
                 }
 
                 // Add to meeting session (clean format, just the content)
                 if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text);
+                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
                     meeting_session->add_transcription(" ");
                     meeting_session->add_transcription(seg.english_text);
                     meeting_session->add_transcription(" ");
                 }
             }
         }
-        
+
         fflush(stdout);
     }
 }
@@ -889,6 +1145,15 @@ void perform_export(ExportSession& session, const whisper_params& params) {
 void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
 static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
+    // Helper to check that a required argument value exists
+    auto require_arg = [&](int idx, const std::string& flag) -> bool {
+        if (idx + 1 >= argc) {
+            fprintf(stderr, "error: '%s' requires an argument\n", flag.c_str());
+            return false;
+        }
+        return true;
+    };
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -896,25 +1161,25 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
             whisper_print_usage(argc, argv, params);
             exit(0);
         }
-        else if (arg == "-t"    || arg == "--threads")       { params.n_threads     = std::stoi(argv[++i]); }
-        else if (                  arg == "--step")          { params.step_ms       = std::stoi(argv[++i]); }
-        else if (                  arg == "--length")        { params.length_ms     = std::stoi(argv[++i]); }
-        else if (                  arg == "--keep")          { params.keep_ms       = std::stoi(argv[++i]); }
-        else if (arg == "-c"    || arg == "--capture")       { params.capture_id    = std::stoi(argv[++i]); }
-        else if (arg == "-mt"   || arg == "--max-tokens")    { params.max_tokens    = std::stoi(argv[++i]); }
-        else if (arg == "-ac"   || arg == "--audio-ctx")     { params.audio_ctx     = std::stoi(argv[++i]); }
-        else if (arg == "-bs"   || arg == "--beam-size")     { params.beam_size     = std::stoi(argv[++i]); }
-        else if (arg == "-vth"  || arg == "--vad-thold")     { params.vad_thold     = std::stof(argv[++i]); }
-        else if (arg == "-fth"  || arg == "--freq-thold")    { params.freq_thold    = std::stof(argv[++i]); }
+        else if (arg == "-t"    || arg == "--threads")       { if (!require_arg(i, arg)) return false; params.n_threads     = std::stoi(argv[++i]); }
+        else if (                  arg == "--step")          { if (!require_arg(i, arg)) return false; params.step_ms       = std::stoi(argv[++i]); }
+        else if (                  arg == "--length")        { if (!require_arg(i, arg)) return false; params.length_ms     = std::stoi(argv[++i]); }
+        else if (                  arg == "--keep")          { if (!require_arg(i, arg)) return false; params.keep_ms       = std::stoi(argv[++i]); }
+        else if (arg == "-c"    || arg == "--capture")       { if (!require_arg(i, arg)) return false; params.capture_id    = std::stoi(argv[++i]); }
+        else if (arg == "-mt"   || arg == "--max-tokens")    { if (!require_arg(i, arg)) return false; params.max_tokens    = std::stoi(argv[++i]); }
+        else if (arg == "-ac"   || arg == "--audio-ctx")     { if (!require_arg(i, arg)) return false; params.audio_ctx     = std::stoi(argv[++i]); }
+        else if (arg == "-bs"   || arg == "--beam-size")     { if (!require_arg(i, arg)) return false; params.beam_size     = std::stoi(argv[++i]); }
+        else if (arg == "-vth"  || arg == "--vad-thold")     { if (!require_arg(i, arg)) return false; params.vad_thold     = std::stof(argv[++i]); }
+        else if (arg == "-fth"  || arg == "--freq-thold")    { if (!require_arg(i, arg)) return false; params.freq_thold    = std::stof(argv[++i]); }
         else if (arg == "-tr"   || arg == "--translate")     { params.translate     = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")   { params.no_fallback   = true; }
         else if (arg == "-ps"   || arg == "--print-special") { params.print_special = true; }
         else if (arg == "-pc"   || arg == "--print-colors")  { params.print_colors  = true; }
         else if (arg == "-kc"   || arg == "--keep-context")  { params.no_context    = false; }
-        else if (arg == "-l"    || arg == "--language")      { params.language      = argv[++i]; }
-        else if (arg == "-m"    || arg == "--model")         { params.model         = argv[++i]; }
-        else if (arg == "-f"    || arg == "--file")          { params.fname_out     = argv[++i]; }
-        else if (arg == "-om"   || arg == "--output-mode")   { params.output_mode   = argv[++i]; }
+        else if (arg == "-l"    || arg == "--language")      { if (!require_arg(i, arg)) return false; params.language      = argv[++i]; }
+        else if (arg == "-m"    || arg == "--model")         { if (!require_arg(i, arg)) return false; params.model         = argv[++i]; }
+        else if (arg == "-f"    || arg == "--file")          { if (!require_arg(i, arg)) return false; params.fname_out     = argv[++i]; }
+        else if (arg == "-om"   || arg == "--output-mode")   { if (!require_arg(i, arg)) return false; params.output_mode   = argv[++i]; }
         else if (arg == "-tdrz" || arg == "--tinydiarize")   { params.tinydiarize   = true; }
         else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = true; }
         else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
@@ -922,32 +1187,40 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         // CoreML specific options
         else if (arg == "-coreml" || arg == "--coreml")      { params.use_coreml    = true; }
         else if (arg == "-ncoreml" || arg == "--no-coreml")  { params.use_coreml    = false; }
-        else if (arg == "-cm"   || arg == "--coreml-model")  { params.coreml_model  = argv[++i]; }
+        else if (arg == "-cm"   || arg == "--coreml-model")  { if (!require_arg(i, arg)) return false; params.coreml_model  = argv[++i]; }
         // Model management options
         else if (arg == "--list-models")                     { params.list_models   = true; }
         else if (arg == "--list-downloaded")                 { params.list_downloaded = true; }
         else if (arg == "--show-storage")                    { params.show_storage  = true; }
-        else if (arg == "--delete-model")                    { params.delete_model_flag = true; params.model_to_delete = argv[++i]; }
+        else if (arg == "--delete-model")                    { if (!require_arg(i, arg)) return false; params.delete_model_flag = true; params.model_to_delete = argv[++i]; }
         else if (arg == "--delete-all-models")               { params.delete_all_models_flag = true; }
         else if (arg == "--cleanup")                         { params.cleanup_models = true; }
         // Auto-copy options
         else if (arg == "--auto-copy")                       { params.auto_copy_enabled = true; }
         else if (arg == "--no-auto-copy")                    { params.auto_copy_enabled = false; }
-        else if (arg == "--auto-copy-max-duration")          { params.auto_copy_max_duration_hours = std::stoi(argv[++i]); }
-        else if (arg == "--auto-copy-max-size")              { params.auto_copy_max_size_bytes = std::stoi(argv[++i]); }
+        else if (arg == "--auto-copy-max-duration")          { if (!require_arg(i, arg)) return false; params.auto_copy_max_duration_hours = std::stoi(argv[++i]); }
+        else if (arg == "--auto-copy-max-size")              { if (!require_arg(i, arg)) return false; params.auto_copy_max_size_bytes = std::stoi(argv[++i]); }
         // Export options
         else if (arg == "--export")                          { params.export_enabled = true; }
         else if (arg == "--no-export")                       { params.export_enabled = false; }
-        else if (arg == "--export-format")                   { params.export_format = argv[++i]; }
-        else if (arg == "--export-file")                     { params.export_file = argv[++i]; params.export_auto_filename = false; }
+        else if (arg == "--export-format")                   { if (!require_arg(i, arg)) return false; params.export_format = argv[++i]; }
+        else if (arg == "--export-file")                     { if (!require_arg(i, arg)) return false; params.export_file = argv[++i]; params.export_auto_filename = false; }
         else if (arg == "--export-auto-filename")            { params.export_auto_filename = true; }
         else if (arg == "--export-no-metadata")              { params.export_include_metadata = false; }
         else if (arg == "--export-no-timestamps")            { params.export_include_timestamps = false; }
         else if (arg == "--export-include-confidence")       { params.export_include_confidence = true; }
         // Meeting options
         else if (arg == "--meeting")                         { params.meeting_mode = true; }
-        else if (arg == "--prompt")                          { params.meeting_prompt = argv[++i]; }
-        else if (arg == "--name")                            { params.meeting_name = argv[++i]; }
+        else if (arg == "--no-meeting")                      { params.meeting_mode = false; }
+        else if (arg == "--prompt")                          { if (!require_arg(i, arg)) return false; params.meeting_prompt = argv[++i]; }
+        else if (arg == "--name")                            { if (!require_arg(i, arg)) return false; params.meeting_name = argv[++i]; }
+        else if (arg == "--meeting-timeout")                  { if (!require_arg(i, arg)) return false; params.meeting_timeout = std::stoi(argv[++i]); }
+        else if (arg == "--meeting-max-single-pass")          { if (!require_arg(i, arg)) return false; params.meeting_max_single_pass = std::stoi(argv[++i]); }
+        // Accuracy options
+        else if (arg == "--initial-prompt")                   { if (!require_arg(i, arg)) return false; params.initial_prompt = argv[++i]; }
+        else if (arg == "--suppress-regex")                   { if (!require_arg(i, arg)) return false; params.suppress_regex = argv[++i]; }
+        // VAD model
+        else if (arg == "--vad-model")                        { if (!require_arg(i, arg)) return false; params.vad_model_path = argv[++i]; }
         // Config management options
         else if (arg == "config") {
             if (i + 1 < argc) {
@@ -1067,8 +1340,16 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "\n");
     fprintf(stderr, "meeting organization:\n");
     fprintf(stderr, "            --meeting        [%-7s] enable meeting transcription mode\n", params.meeting_mode ? "true" : "false");
-    fprintf(stderr, "            --prompt PROMPT  [%-7s] custom prompt for meeting organization\n", params.meeting_prompt.empty() ? "default" : "custom");
-    fprintf(stderr, "            --name NAME      [%-7s] (deprecated: meeting mode always uses [YYYY]-[MM]-[DD].md naming)\n", params.meeting_name.empty() ? "ignored" : params.meeting_name.c_str());
+    fprintf(stderr, "            --no-meeting     [%-7s] disable meeting mode (when enabled via config)\n", params.meeting_mode ? "false" : "true");
+    fprintf(stderr, "            --prompt PROMPT  [%-7s] custom prompt text or file path for meeting organization\n", params.meeting_prompt.empty() ? "default" : "custom");
+    fprintf(stderr, "            --name NAME      [%-7s] meeting output filename prefix\n", params.meeting_name.empty() ? "auto" : params.meeting_name.c_str());
+    fprintf(stderr, "            --meeting-timeout N [%-4d] timeout for Claude CLI in seconds\n", params.meeting_timeout);
+    fprintf(stderr, "            --meeting-max-single-pass N [%-4d] max words before multi-pass\n", params.meeting_max_single_pass);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "accuracy options:\n");
+    fprintf(stderr, "            --initial-prompt TEXT [%-7s] initial prompt for conditioning\n", params.initial_prompt.empty() ? "none" : "set");
+    fprintf(stderr, "            --suppress-regex PAT  [%-7s] regex pattern to suppress from output\n", params.suppress_regex.empty() ? "none" : "set");
+    fprintf(stderr, "            --vad-model PATH      [%-7s] Silero VAD model path for speech detection\n", params.vad_model_path.empty() ? "none" : "set");
     fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models      list available models for download\n");
@@ -1197,6 +1478,18 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // Meeting mode: apply optimized defaults (can still be overridden by explicit CLI args)
+    // These are set after CLI parsing so they only apply if the user didn't explicitly set them
+    if (params.meeting_mode) {
+        // Better accuracy defaults for meeting transcription
+        if (params.keep_ms == 200) params.keep_ms = 2000;      // More audio context overlap
+        if (params.step_ms == 3000) params.step_ms = 5000;     // Longer processing windows
+        if (params.length_ms == 10000) params.length_ms = 15000;
+        if (params.initial_prompt.empty()) {
+            params.initial_prompt = "Meeting transcription with proper punctuation and capitalization.";
+        }
+    }
+
     params.keep_ms   = std::min(params.keep_ms,   params.step_ms);
     params.length_ms = std::max(params.length_ms, params.step_ms);
 
@@ -1210,7 +1503,10 @@ int main(int argc, char ** argv) {
     const int n_new_line = !use_vad ? std::max(1, params.length_ms / params.step_ms - 1) : 1;
 
     params.no_timestamps  = !use_vad;
-    params.no_context    |= use_vad;
+    // In meeting mode, keep context between chunks for better accuracy
+    if (!params.meeting_mode) {
+        params.no_context |= use_vad;
+    }
     params.max_tokens     = 0;
 
     // Init audio
@@ -1491,12 +1787,60 @@ int main(int argc, char ** argv) {
             wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
             wparams.prompt_n_tokens  = params.no_context ? 0       : prompt_tokens.size();
 
+            // Initial prompt support
+            if (!params.initial_prompt.empty()) {
+                wparams.initial_prompt = params.initial_prompt.c_str();
+                if (params.meeting_mode) {
+                    wparams.carry_initial_prompt = true;
+                }
+            }
+
+            // Suppress regex support
+            if (!params.suppress_regex.empty()) {
+                wparams.suppress_regex = params.suppress_regex.c_str();
+            }
+
+            // Meeting mode: tune whisper params for better accuracy
+            if (params.meeting_mode) {
+                wparams.suppress_nst = true;          // Suppress non-speech tokens
+                wparams.no_speech_thold = 0.7f;       // More aggressive silence suppression
+                wparams.entropy_thold = 2.0f;         // Catch repetitive hallucinations earlier
+            }
+
+            // Silero VAD integration
+            if (!params.vad_model_path.empty()) {
+                wparams.vad = true;
+                wparams.vad_model_path = params.vad_model_path.c_str();
+                // Meeting-optimized VAD settings
+                if (params.meeting_mode) {
+                    wparams.vad_params.min_silence_duration_ms = 2000; // Longer pauses in meetings
+                    wparams.vad_params.speech_pad_ms = 400;
+                }
+            }
+
             // Use new bilingual processing
             std::vector<BilingualSegment> bilingual_results;
             if (process_audio_segment(ctx, ctx_translate, params, pcmf32, bilingual_results) != 0) {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
                 return 6;
             }
+
+            // Apply hallucination filter
+            for (auto& seg : bilingual_results) {
+                if (!seg.original_text.empty()) {
+                    seg.original_text = filter_hallucinations(seg.original_text);
+                }
+                if (!seg.english_text.empty()) {
+                    seg.english_text = filter_hallucinations(seg.english_text);
+                }
+            }
+            // Remove segments where both texts became empty after filtering
+            bilingual_results.erase(
+                std::remove_if(bilingual_results.begin(), bilingual_results.end(),
+                    [](const BilingualSegment& s) {
+                        return s.original_text.empty() && s.english_text.empty();
+                    }),
+                bilingual_results.end());
 
             // Print results
             {
@@ -1521,9 +1865,26 @@ int main(int argc, char ** argv) {
                             const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
                             printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
                         }
-                        
+
                         print_colored_tokens(ctx, i, params);
                         printf("\n");
+
+                        // Accumulate text for meeting/auto-copy/export even in color mode
+                        const char* seg_text = whisper_full_get_segment_text(ctx, i);
+                        bool speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
+
+                        if (params.meeting_mode) {
+                            meeting_session.add_transcription(std::string(seg_text), speaker_turn);
+                            meeting_session.add_transcription(" ");
+                        }
+                        if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                            auto_copy_session.transcription_buffer << seg_text;
+                        }
+                        if (params.export_enabled) {
+                            int64_t t0 = whisper_full_get_segment_t0(ctx, i);
+                            int64_t t1 = whisper_full_get_segment_t1(ctx, i);
+                            export_session.segments.emplace_back(t0 / 10, t1 / 10, std::string(seg_text), 1.0f, speaker_turn);
+                        }
                     }
                 } else {
                     // Use segment-based bilingual output
@@ -1575,33 +1936,40 @@ int main(int argc, char ** argv) {
     // Perform meeting processing when session ends
     if (params.meeting_mode) {
         std::string meeting_output_file = generate_meeting_filename(params.meeting_name);
-        std::cout << "\n🚀 Processing meeting transcription with Claude CLI..." << std::endl;
+        double duration_minutes = meeting_session.get_duration_minutes();
+        std::cout << "\nProcessing meeting transcription with Claude CLI..." << std::endl;
+        std::cout << "Duration: " << static_cast<int>(duration_minutes) << " minutes, "
+                  << "Speakers detected: " << meeting_session.total_speakers << std::endl;
 
         bool success = process_meeting_transcription(
             meeting_session.get_transcription(),
             params.meeting_prompt,
-            meeting_output_file
+            meeting_output_file,
+            params.meeting_timeout,
+            duration_minutes,
+            params.meeting_max_single_pass
         );
 
         if (!success) {
             // Fallback: save raw transcription to the same date-based filename
             std::ofstream raw_file(meeting_output_file);
             if (raw_file.is_open()) {
-                // Save raw transcription as markdown
                 auto now = std::chrono::system_clock::now();
                 auto time_t = std::chrono::system_clock::to_time_t(now);
                 std::tm* tm_ptr = std::localtime(&time_t);
 
                 raw_file << "# Meeting Transcription\n\n";
-                raw_file << "**Date**: " << std::put_time(tm_ptr, "%Y-%m-%d %H:%M") << "\n\n";
+                raw_file << "**Date**: " << std::put_time(tm_ptr, "%Y-%m-%d %H:%M") << "\n";
+                raw_file << "**Duration**: " << static_cast<int>(duration_minutes) << " minutes\n";
+                raw_file << "**Speakers**: " << meeting_session.total_speakers << "\n";
                 raw_file << "**Session ID**: " << meeting_session.session_id << "\n\n";
                 raw_file << "---\n\n";
                 raw_file << "## Raw Transcription\n\n";
                 raw_file << meeting_session.get_transcription();
                 raw_file.close();
-                std::cout << "✅ Transcription saved to: " << meeting_output_file << std::endl;
+                std::cout << "Transcription saved to: " << meeting_output_file << std::endl;
             } else {
-                std::cout << "❌ Failed to save transcription to file" << std::endl;
+                std::cerr << "Failed to save transcription to file" << std::endl;
             }
         }
     }

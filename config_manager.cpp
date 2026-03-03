@@ -150,6 +150,14 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.auto_copy_enabled) params.auto_copy_enabled = *effective.auto_copy_enabled;
     if (effective.auto_copy_max_duration_hours) params.auto_copy_max_duration_hours = *effective.auto_copy_max_duration_hours;
     if (effective.auto_copy_max_size_bytes) params.auto_copy_max_size_bytes = *effective.auto_copy_max_size_bytes;
+
+    // Meeting settings
+    if (effective.meeting_mode) params.meeting_mode = *effective.meeting_mode;
+    if (effective.meeting_prompt) params.meeting_prompt = *effective.meeting_prompt;
+    if (effective.meeting_name) params.meeting_name = *effective.meeting_name;
+    if (effective.meeting_initial_prompt) params.initial_prompt = *effective.meeting_initial_prompt;
+    if (effective.meeting_timeout) params.meeting_timeout = *effective.meeting_timeout;
+    if (effective.meeting_max_single_pass) params.meeting_max_single_pass = *effective.meeting_max_single_pass;
 }
 
 std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
@@ -203,7 +211,16 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"auto_copy_max_duration", "auto_copy_max_duration_hours"},
         {"auto_copy_max_duration_hours", "auto_copy_max_duration_hours"},
         {"auto_copy_max_size", "auto_copy_max_size_bytes"},
-        {"auto_copy_max_size_bytes", "auto_copy_max_size_bytes"}
+        {"auto_copy_max_size_bytes", "auto_copy_max_size_bytes"},
+
+        // Meeting configuration keys
+        {"meeting", "meeting_mode"},
+        {"meeting_mode", "meeting_mode"},
+        {"meeting_prompt", "meeting_prompt"},
+        {"meeting_name", "meeting_name"},
+        {"meeting_initial_prompt", "meeting_initial_prompt"},
+        {"meeting_timeout", "meeting_timeout"},
+        {"meeting_max_single_pass", "meeting_max_single_pass"}
     };
 }
 
@@ -302,6 +319,16 @@ void ConfigManager::list_config() const {
     std::cout << "  auto_copy_max_size           : " << (effective.auto_copy_max_size_bytes ? std::to_string(*effective.auto_copy_max_size_bytes) : "1048576") << " - Max transcription size (bytes) before skipping auto-copy\n";
     std::cout << "\n";
     
+    // Meeting Settings
+    std::cout << "🎯 Meeting Settings:\n";
+    std::cout << "  meeting (meeting_mode)       : " << (effective.meeting_mode ? (*effective.meeting_mode ? "true" : "false") : "false") << " - Enable meeting mode (AI summarization)\n";
+    std::cout << "  meeting_prompt               : " << (effective.meeting_prompt ? "(custom)" : "(default)") << " - Custom meeting prompt (text or file path)\n";
+    std::cout << "  meeting_name                 : " << (effective.meeting_name ? *effective.meeting_name : "(none)") << " - Meeting output filename prefix\n";
+    std::cout << "  meeting_initial_prompt        : " << (effective.meeting_initial_prompt ? "(custom)" : "(default)") << " - Initial whisper prompt for meeting mode\n";
+    std::cout << "  meeting_timeout              : " << (effective.meeting_timeout ? std::to_string(*effective.meeting_timeout) : "120") << " - Claude CLI timeout in seconds\n";
+    std::cout << "  meeting_max_single_pass      : " << (effective.meeting_max_single_pass ? std::to_string(*effective.meeting_max_single_pass) : "20000") << " - Max words before multi-pass summarization\n";
+    std::cout << "\n";
+
     std::cout << "💡 Configuration Examples:\n";
     std::cout << "   config set model base.en               # Set default model\n";
     std::cout << "   config set threads 8                   # Set thread count\n";
@@ -309,6 +336,7 @@ void ConfigManager::list_config() const {
     std::cout << "   config set step_ms 0                   # Enable VAD mode\n";
     std::cout << "   config set print_colors true           # Enable colored output\n";
     std::cout << "   config set auto_copy true              # Enable clipboard copy\n";
+    std::cout << "   config set meeting true                # Enable meeting mode\n";
     std::cout << "   config set output_mode bilingual       # Show original + English\n";
     std::cout << "   config set models_dir /custom/path     # Change models location\n";
     std::cout << "   config get <key>                       # Get any setting\n";
@@ -362,6 +390,14 @@ void ConfigManager::load_env_vars() {
     env_config_.auto_copy_enabled = get_env_bool("WHISPER_AUTO_COPY");
     env_config_.auto_copy_max_duration_hours = get_env_int("WHISPER_AUTO_COPY_MAX_DURATION");
     env_config_.auto_copy_max_size_bytes = get_env_int("WHISPER_AUTO_COPY_MAX_SIZE");
+
+    // Meeting environment variables
+    env_config_.meeting_mode = get_env_bool("WHISPER_MEETING");
+    env_config_.meeting_prompt = get_env_var("WHISPER_MEETING_PROMPT");
+    env_config_.meeting_name = get_env_var("WHISPER_MEETING_NAME");
+    env_config_.meeting_initial_prompt = get_env_var("WHISPER_MEETING_INITIAL_PROMPT");
+    env_config_.meeting_timeout = get_env_int("WHISPER_MEETING_TIMEOUT");
+    env_config_.meeting_max_single_pass = get_env_int("WHISPER_MEETING_MAX_SINGLE_PASS");
 }
 
 bool ConfigManager::validate_config() const {
@@ -451,8 +487,16 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.auto_copy_enabled) merged.auto_copy_enabled = config.auto_copy_enabled;
         if (config.auto_copy_max_duration_hours) merged.auto_copy_max_duration_hours = config.auto_copy_max_duration_hours;
         if (config.auto_copy_max_size_bytes) merged.auto_copy_max_size_bytes = config.auto_copy_max_size_bytes;
+
+        // Meeting settings
+        if (config.meeting_mode) merged.meeting_mode = config.meeting_mode;
+        if (config.meeting_prompt) merged.meeting_prompt = config.meeting_prompt;
+        if (config.meeting_name) merged.meeting_name = config.meeting_name;
+        if (config.meeting_initial_prompt) merged.meeting_initial_prompt = config.meeting_initial_prompt;
+        if (config.meeting_timeout) merged.meeting_timeout = config.meeting_timeout;
+        if (config.meeting_max_single_pass) merged.meeting_max_single_pass = config.meeting_max_single_pass;
     }
-    
+
     return merged;
 }
 
@@ -513,7 +557,15 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.auto_copy_enabled) add_bool("auto_copy_enabled", *config.auto_copy_enabled);
     if (config.auto_copy_max_duration_hours) add_int("auto_copy_max_duration_hours", *config.auto_copy_max_duration_hours);
     if (config.auto_copy_max_size_bytes) add_int("auto_copy_max_size_bytes", *config.auto_copy_max_size_bytes);
-    
+
+    // Meeting settings
+    if (config.meeting_mode) add_bool("meeting_mode", *config.meeting_mode);
+    if (config.meeting_prompt) add_field("meeting_prompt", *config.meeting_prompt);
+    if (config.meeting_name) add_field("meeting_name", *config.meeting_name);
+    if (config.meeting_initial_prompt) add_field("meeting_initial_prompt", *config.meeting_initial_prompt);
+    if (config.meeting_timeout) add_int("meeting_timeout", *config.meeting_timeout);
+    if (config.meeting_max_single_pass) add_int("meeting_max_single_pass", *config.meeting_max_single_pass);
+
     json << "\n}\n";
     return json.str();
 }
@@ -581,7 +633,15 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.auto_copy_enabled = get_bool("auto_copy_enabled");
     config.auto_copy_max_duration_hours = get_int("auto_copy_max_duration_hours");
     config.auto_copy_max_size_bytes = get_int("auto_copy_max_size_bytes");
-    
+
+    // Meeting settings
+    config.meeting_mode = get_bool("meeting_mode");
+    config.meeting_prompt = get_string("meeting_prompt");
+    config.meeting_name = get_string("meeting_name");
+    config.meeting_initial_prompt = get_string("meeting_initial_prompt");
+    config.meeting_timeout = get_int("meeting_timeout");
+    config.meeting_max_single_pass = get_int("meeting_max_single_pass");
+
     return config;
 }
 
@@ -657,6 +717,12 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "auto_copy_enabled") config.auto_copy_enabled = std::nullopt;
         else if (key == "auto_copy_max_duration_hours") config.auto_copy_max_duration_hours = std::nullopt;
         else if (key == "auto_copy_max_size_bytes") config.auto_copy_max_size_bytes = std::nullopt;
+        else if (key == "meeting_mode") config.meeting_mode = std::nullopt;
+        else if (key == "meeting_prompt") config.meeting_prompt = std::nullopt;
+        else if (key == "meeting_name") config.meeting_name = std::nullopt;
+        else if (key == "meeting_initial_prompt") config.meeting_initial_prompt = std::nullopt;
+        else if (key == "meeting_timeout") config.meeting_timeout = std::nullopt;
+        else if (key == "meeting_max_single_pass") config.meeting_max_single_pass = std::nullopt;
         else return false;
         return true;
     }
@@ -736,6 +802,18 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         }
         else if (key == "auto_copy_max_duration_hours") config.auto_copy_max_duration_hours = std::stoi(value);
         else if (key == "auto_copy_max_size_bytes") config.auto_copy_max_size_bytes = std::stoi(value);
+        else if (key == "meeting_mode") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.meeting_mode = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.meeting_mode = false;
+            else return false;
+        }
+        else if (key == "meeting_prompt") config.meeting_prompt = value;
+        else if (key == "meeting_name") config.meeting_name = value;
+        else if (key == "meeting_initial_prompt") config.meeting_initial_prompt = value;
+        else if (key == "meeting_timeout") config.meeting_timeout = std::stoi(value);
+        else if (key == "meeting_max_single_pass") config.meeting_max_single_pass = std::stoi(value);
         else return false;
     } catch (...) {
         return false;
@@ -771,6 +849,12 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "auto_copy_enabled") return config.auto_copy_enabled ? std::make_optional(*config.auto_copy_enabled ? "true" : "false") : std::nullopt;
     else if (key == "auto_copy_max_duration_hours") return config.auto_copy_max_duration_hours ? std::make_optional(std::to_string(*config.auto_copy_max_duration_hours)) : std::nullopt;
     else if (key == "auto_copy_max_size_bytes") return config.auto_copy_max_size_bytes ? std::make_optional(std::to_string(*config.auto_copy_max_size_bytes)) : std::nullopt;
-    
+    else if (key == "meeting_mode") return config.meeting_mode ? std::make_optional(*config.meeting_mode ? "true" : "false") : std::nullopt;
+    else if (key == "meeting_prompt") return config.meeting_prompt;
+    else if (key == "meeting_name") return config.meeting_name;
+    else if (key == "meeting_initial_prompt") return config.meeting_initial_prompt;
+    else if (key == "meeting_timeout") return config.meeting_timeout ? std::make_optional(std::to_string(*config.meeting_timeout)) : std::nullopt;
+    else if (key == "meeting_max_single_pass") return config.meeting_max_single_pass ? std::make_optional(std::to_string(*config.meeting_max_single_pass)) : std::nullopt;
+
     return std::nullopt;
 }

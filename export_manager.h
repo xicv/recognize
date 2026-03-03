@@ -21,9 +21,10 @@ struct TranscriptionSegment {
     std::string text;
     float confidence;
     bool speaker_turn;
-    
-    TranscriptionSegment(int64_t start, int64_t end, const std::string& content, float conf = 1.0f, bool turn = false)
-        : start_time_ms(start), end_time_ms(end), text(content), confidence(conf), speaker_turn(turn) {}
+    int speaker_id = -1;
+
+    TranscriptionSegment(int64_t start, int64_t end, const std::string& content, float conf = 1.0f, bool turn = false, int spk = -1)
+        : start_time_ms(start), end_time_ms(end), text(content), confidence(conf), speaker_turn(turn), speaker_id(spk) {}
 };
 
 struct SessionMetadata {
@@ -40,6 +41,7 @@ struct SessionMetadata {
     int length_ms;
     size_t total_segments;
     double total_duration_seconds;
+    int total_speakers = 0;
     std::string version;
 };
 

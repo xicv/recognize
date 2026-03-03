@@ -28,9 +28,11 @@ struct whisper_params {
     bool save_audio    = false;
     bool use_coreml    = true;   // Enable CoreML by default on macOS
     bool use_gpu       = true;   // Keep GPU support for fallback
-    bool flash_attn    = false;
+    bool flash_attn    = true;  // Flash attention enabled by default (matches whisper.cpp v1.8+)
 
     std::string language  = "en";
+    std::string initial_prompt = "";   // Initial prompt for conditioning
+    std::string suppress_regex = "";   // Regex pattern to suppress from output
     std::string model     = ""; // Will be auto-resolved by ModelManager
     std::string coreml_model = ""; // Optional CoreML model path
     std::string fname_out;
@@ -63,4 +65,9 @@ struct whisper_params {
     bool meeting_mode = false;
     std::string meeting_prompt = "";
     std::string meeting_name = "";
+    int32_t meeting_timeout = 120;     // Timeout for Claude CLI in seconds
+    int32_t meeting_max_single_pass = 20000; // Max words before multi-pass summarization
+
+    // VAD model settings
+    std::string vad_model_path = "";   // Path to Silero VAD model
 };

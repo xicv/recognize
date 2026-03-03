@@ -42,6 +42,14 @@ struct ConfigData {
     std::optional<bool> auto_copy_enabled;
     std::optional<int> auto_copy_max_duration_hours;
     std::optional<int> auto_copy_max_size_bytes;
+
+    // Meeting settings
+    std::optional<bool> meeting_mode;
+    std::optional<std::string> meeting_prompt;
+    std::optional<std::string> meeting_name;
+    std::optional<std::string> meeting_initial_prompt;
+    std::optional<int> meeting_timeout;
+    std::optional<int> meeting_max_single_pass;
 };
 
 class ConfigManager {

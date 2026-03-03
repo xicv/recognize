@@ -20,6 +20,10 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **Professional subtitle generation** in SRT and VTT formats
 - **Session metadata tracking** with detailed performance metrics
 - **AI-powered meeting organization** with Claude CLI integration for structured meeting summaries
+- **Speaker tracking** with automatic `[Speaker N]` labeling across meeting and export outputs
+- **Hallucination filtering** to remove phantom phrases and deduplicate repeated text
+- **Multi-pass summarization** for long meetings (>20k words) with chunk-based processing
+- **Transcription accuracy tuning** with initial prompts, suppress regex, and Silero VAD support
 
 ## Requirements
 
@@ -178,20 +182,30 @@ recognize --meeting
 # Custom prompt file (advanced usage)
 recognize --meeting --prompt custom_prompt.txt
 
+# Meeting with named output file prefix
+recognize --meeting --name standup
+
 # Meeting with specific model and output language
 recognize --meeting --output-mode english -m base.en
 
 # Meeting with speaker segmentation
 recognize --meeting --tinydiarize -m small.en-tdrz
+
+# Long meeting with custom timeout and multi-pass threshold
+recognize --meeting --meeting-timeout 180 --meeting-max-single-pass 15000
 ```
 
 **Meeting Organization Features:**
 - **Automatic AI Processing**: Raw transcription is processed by Claude CLI when recording ends
 - **Structured Output**: Generates professional meeting summaries with action items, decisions, and metadata
+- **Speaker Tracking**: Automatic `[Speaker 1]`, `[Speaker 2]` labels when speaker turns are detected
+- **Multi-pass Summarization**: Long meetings (>20k words) are split into chunks for per-chunk extraction, then synthesized
+- **Hallucination Filtering**: Removes phantom phrases ("Thank you for watching", URLs, etc.) and deduplicates repeated sentences
+- **Meeting-Optimized Defaults**: Automatically sets `keep_ms=2000`, `step_ms=5000`, `length_ms=15000` and whisper accuracy parameters
 - **Smart Fallback**: If Claude CLI unavailable, saves raw transcription to same date-based file
-- **Date-Based Naming**: Always saves to `[YYYY]-[MM]-[DD].md` with automatic numeric suffix if file exists
+- **Date-Based Naming**: Saves to `[YYYY]-[MM]-[DD].md` or `[name]-[YYYY]-[MM]-[DD].md` with automatic numeric suffix
+- **Configurable Timeout**: Claude CLI invocation timeout (default: 120s) with fallback to raw transcription
 - **Original Content Preserved**: On success, raw transcription is wrapped in HTML comments `<!-- -->` in the output
-- **Default Prompt**: Comprehensive meeting organization template included
 - **Integration**: Works with all existing features (export, auto-copy, speaker segmentation)
 
 ### Supported Export Formats
@@ -234,9 +248,18 @@ recognize --meeting --tinydiarize -m small.en-tdrz
 - `--auto-copy-max-size N` - Max transcription size in bytes before skipping auto-copy
 
 ### Meeting Organization Options
-- `--meeting` - Enable meeting transcription mode with AI organization (saves to `[YYYY]-[MM]-[DD].md`)
-- `--prompt TEXT` - Custom prompt for meeting organization (uses comprehensive default if not provided)
-- `--name PATH` - (Deprecated) Meeting mode always uses date-based naming `[YYYY]-[MM]-[DD].md` with numeric suffix
+- `--meeting` - Enable meeting transcription mode with AI organization
+- `--no-meeting` - Disable meeting mode when enabled via config
+- `--prompt TEXT` - Custom prompt text or file path for meeting organization
+- `--name NAME` - Meeting output filename prefix (produces `[name]-[YYYY]-[MM]-[DD].md`)
+- `--meeting-timeout N` - Timeout for Claude CLI in seconds (default: 120)
+- `--meeting-max-single-pass N` - Max words before multi-pass summarization (default: 20000)
+
+### Accuracy Options
+- `--initial-prompt TEXT` - Initial prompt for whisper conditioning (e.g., vocabulary hints)
+- `--suppress-regex PAT` - Regex pattern to suppress from output
+- `--vad-model PATH` - Silero VAD model path for improved speech detection
+- `-fa, --flash-attn` - Flash attention during inference (default: enabled)
 
 ### Audio Options
 - `-c, --capture` - Audio capture device ID (default: -1 for default)
@@ -261,7 +284,7 @@ recognize --meeting --tinydiarize -m small.en-tdrz
 - Speaker segmentation detects when different people are speaking and marks speaker turns
 - Requires models with `tdrz` suffix (e.g., `ggml-small.en-tdrz.bin`)
 - Currently supports English-only with small.en models
-- Output includes `[SPEAKER_TURN]` markers when speakers change
+- Output includes `[Speaker N]` labels when speakers change
 
 ### Output Options
 - `-f, --file` - Output transcription to file
@@ -326,6 +349,10 @@ export WHISPER_TINYDIARIZE=true
 export WHISPER_AUTO_COPY=true
 export WHISPER_AUTO_COPY_MAX_DURATION=2
 export WHISPER_AUTO_COPY_MAX_SIZE=1048576
+export WHISPER_MEETING=true
+export WHISPER_MEETING_PROMPT="custom prompt"
+export WHISPER_MEETING_NAME=standup
+export WHISPER_MEETING_TIMEOUT=180
 ```
 
 ### Configuration File Format
@@ -346,7 +373,10 @@ Configuration files use JSON format:
   "tinydiarize": false,
   "auto_copy_enabled": true,
   "auto_copy_max_duration_hours": 2,
-  "auto_copy_max_size_bytes": 1048576
+  "auto_copy_max_size_bytes": 1048576,
+  "meeting_mode": false,
+  "meeting_timeout": 120,
+  "meeting_max_single_pass": 20000
 }
 ```
 
@@ -389,9 +419,12 @@ Configuration files use JSON format:
 - `export_include_confidence` - Include confidence scores in exports (default: false)
 
 ### Meeting Organization Configuration
-- `meeting_mode` - Enable/disable meeting transcription mode (default: false)
-- `meeting_prompt` - Custom prompt for meeting organization (uses comprehensive default if empty)
-- `meeting_name` - (Deprecated) Meeting mode always uses date-based naming `[YYYY]-[MM]-[DD].md` with numeric suffix
+- `meeting` / `meeting_mode` - Enable/disable meeting transcription mode (default: false)
+- `meeting_prompt` - Custom prompt text or file path for meeting organization
+- `meeting_name` - Output filename prefix (produces `[name]-[YYYY]-[MM]-[DD].md`)
+- `meeting_initial_prompt` - Initial whisper prompt used during meeting mode transcription
+- `meeting_timeout` - Timeout for Claude CLI in seconds (default: 120)
+- `meeting_max_single_pass` - Max words before multi-pass summarization (default: 20000)
 
 ## Multi-Language Speech Transcription
 
@@ -600,6 +633,9 @@ recognize -m base.en  # Will automatically export to JSON with confidence scores
 # Basic meeting transcription with AI-powered organization
 recognize --meeting
 
+# Named meeting with filename prefix
+recognize --meeting --name "team-standup"
+
 # Team standup with English translation and speaker segmentation
 recognize --meeting --output-mode english --tinydiarize -m small.en-tdrz
 
@@ -609,29 +645,41 @@ recognize --meeting --output-mode bilingual -m medium -l auto
 # Meeting with custom prompt for specialized format
 recognize --meeting --prompt ~/custom-meeting-prompt.txt
 
+# Meeting with accuracy tuning
+recognize --meeting --initial-prompt "Technical discussion about Kubernetes and microservices"
+
+# Long meeting with extended timeout
+recognize --meeting --meeting-timeout 300 --meeting-max-single-pass 30000
+
 # Configure meeting mode as default
 recognize config set meeting_mode true
+recognize config set meeting_timeout 180
 recognize -m base.en  # Will automatically organize meetings
+
+# Disable meeting mode when enabled via config
+recognize --no-meeting
 
 # Combined meeting and export
 recognize --meeting --export --export-format json
 ```
 
 **Meeting Organization Workflow:**
-1. **Recording**: Transcribe meeting with any existing features (VAD, speaker segmentation, translation)
-2. **Processing**: When recording ends (Ctrl-C), automatically sends transcription to Claude CLI
-3. **Organization**: AI structures the raw transcription into professional meeting summary
-4. **Output**: Saves to `[YYYY]-[MM]-[DD].md` with structured content and raw transcription in HTML comments
-5. **Fallback**: If Claude CLI unavailable, saves raw transcription to same date-based file
+1. **Recording**: Transcribe meeting with optimized audio defaults and hallucination filtering
+2. **Speaker Tracking**: Automatic `[Speaker N]` labels when speaker turns are detected
+3. **Processing**: When recording ends (Ctrl-C), sends transcription to Claude CLI via secure temp file
+4. **Multi-pass**: Long meetings (>20k words) use chunk-based extraction then synthesis
+5. **Organization**: AI structures the transcription into a professional meeting summary with type classification
+6. **Output**: Saves to `[YYYY]-[MM]-[DD].md` (or `[name]-[YYYY]-[MM]-[DD].md`) with structured content
+7. **Fallback**: If Claude CLI unavailable or times out, saves raw transcription to same file
 
 **Meeting Output Includes:**
-- Meeting metadata (title, date, attendees, duration)
+- Meeting type auto-classification (standup, planning, retrospective, brainstorm, 1-on-1, all-hands)
 - Executive summary with key outcomes
-- Detailed discussion topics
+- Speaker-attributed discussion topics
 - Action items tracker with owners and deadlines
 - Key decisions log with rationale
-- Open issues and follow-up requirements
-- Quality improvement notes
+- Follow-up email draft
+- Embedded JSON metadata in HTML comments for machine parsing
 - Original raw transcription in HTML comments `<!-- -->` (when AI processing succeeds)
 
 ## Available Models
