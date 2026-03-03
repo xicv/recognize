@@ -35,6 +35,7 @@ make package
 
 ### System-wide Installation (`make install`)
 
+**Requires:** macOS 12.0 (Monterey) or later
 **Installs to:** `/usr/local/bin/recognize`
 **Models directory:** `~/.recognize/models`
 **Accessible from:** Any terminal, any directory
@@ -204,12 +205,13 @@ ls -la ~/.recognize/
 **Binary:** ~50MB (compiled executable)
 **Models (optional, downloaded as needed):**
 - tiny.en: 39 MB
-- base.en: 148 MB  
+- base.en: 148 MB
 - small.en: 488 MB
 - medium.en: 1.5 GB
 - large: 3.1 GB
+- large-v3-turbo: 1.5 GB
 
-**Total for all models:** ~5.2 GB
+**Total for all models:** ~6.7 GB
 
 ## 🎯 Recommended Installation Flow
 

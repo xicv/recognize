@@ -28,7 +28,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Requirements
 
 ### CLI Tool
-- macOS 10.15 or later
+- macOS 12.0 (Monterey) or later
 - SDL2 library (`brew install sdl2`)
 - CMake (`brew install cmake`)
 - Models are downloaded automatically when needed
@@ -51,8 +51,8 @@ make install-deps && make build
 
 # Manual build
 mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DWHISPER_COREML=ON -DGGML_USE_METAL=ON
-make -j$(nproc)
+cmake .. -DCMAKE_BUILD_TYPE=Release -DWHISPER_COREML=ON -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+make -j$(sysctl -n hw.ncpu)
 ```
 
 ### Available Make Targets
@@ -201,7 +201,7 @@ recognize --meeting --meeting-timeout 180 --meeting-max-single-pass 15000
 - **Speaker Tracking**: Automatic `[Speaker 1]`, `[Speaker 2]` labels when speaker turns are detected
 - **Multi-pass Summarization**: Long meetings (>20k words) are split into chunks for per-chunk extraction, then synthesized
 - **Hallucination Filtering**: Removes phantom phrases ("Thank you for watching", URLs, etc.) and deduplicates repeated sentences
-- **Meeting-Optimized Defaults**: Automatically sets `keep_ms=2000`, `step_ms=5000`, `length_ms=15000` and whisper accuracy parameters
+- **Meeting-Optimized Defaults**: Automatically sets `keep_ms=1000`, `step_ms=5000`, `length_ms=15000`, `beam_size=5`, and whisper accuracy parameters
 - **Smart Fallback**: If Claude CLI unavailable, saves raw transcription to same date-based file
 - **Date-Based Naming**: Saves to `[YYYY]-[MM]-[DD].md` or `[name]-[YYYY]-[MM]-[DD].md` with automatic numeric suffix
 - **Configurable Timeout**: Claude CLI invocation timeout (default: 120s) with fallback to raw transcription
@@ -258,7 +258,7 @@ recognize --meeting --meeting-timeout 180 --meeting-max-single-pass 15000
 ### Accuracy Options
 - `--initial-prompt TEXT` - Initial prompt for whisper conditioning (e.g., vocabulary hints)
 - `--suppress-regex PAT` - Regex pattern to suppress from output
-- `--vad-model PATH` - Silero VAD model path for improved speech detection
+- `--vad-model PATH|auto` - Silero VAD model path (`auto` downloads automatically)
 - `-fa, --flash-attn` - Flash attention during inference (default: enabled)
 
 ### Audio Options
@@ -496,7 +496,7 @@ All Whisper-supported languages work with the multi-language features:
 
 - **Bilingual mode**: Approximately 2x processing time (runs two inference passes)
 - **English/Original modes**: Standard processing time (single inference pass)
-- **Model recommendations**: `medium` or `large-v3` for best translation quality
+- **Model recommendations**: `medium`, `large-v3`, or `large-v3-turbo` for best translation quality
 
 ## Performance Tips
 
@@ -506,7 +506,8 @@ All Whisper-supported languages work with the multi-language features:
    - `base.en` for English-only, good balance of speed/accuracy
    - `tiny.en` for fastest processing
    - `small.en` for better accuracy than tiny
-4. **Thread Count**: Use `-t` to match your CPU cores for optimal performance
+4. **Thread Count**: Automatically tuned (4 threads with CoreML, up to 8 without); override with `-t`
+5. **Large-v3-turbo**: Use `large-v3-turbo` for near large-v3 accuracy at ~40% faster speed
 
 ## Examples
 
@@ -699,6 +700,7 @@ The CLI automatically downloads models when needed. Available models:
 - `small` (488 MB) - Higher accuracy, 99 languages
 - `medium` (1.5 GB) - Very high accuracy, 99 languages
 - `large-v3` (3.1 GB) - Highest accuracy, 99 languages
+- `large-v3-turbo` (1.5 GB) - 99 languages, ~40% faster than large-v3 with comparable accuracy
 
 View all available models:
 ```bash

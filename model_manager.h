@@ -53,7 +53,12 @@ public:
     
     // Auto-resolve model (main entry point)
     std::string resolve_model(const std::string& model_arg, bool use_coreml);
-    
+
+    // VAD model management
+    std::string resolve_vad_model(const std::string& vad_model_arg);
+    bool download_vad_model(bool show_progress = true);
+    std::string get_vad_model_path() const;
+
     // Model management
     bool delete_model(const std::string& model_name, bool confirm = true);
     bool delete_all_models(bool confirm = true);

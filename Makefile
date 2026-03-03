@@ -11,10 +11,19 @@ TARGET = recognize
 HOTKEY_APP = RecognizeHotkey
 HOTKEY_APP_NAME = Recognize
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
               -DWHISPER_COREML=ON \
-              -DGGML_USE_METAL=ON \
-              -DWHISPER_SDL2=ON
+              -DWHISPER_COREML_ALLOW_FALLBACK=ON \
+              -DGGML_METAL=ON \
+              -DGGML_METAL_EMBED_LIBRARY=ON \
+              -DGGML_METAL_NDEBUG=ON \
+              -DGGML_NATIVE=ON \
+              -DGGML_ACCELERATE=ON \
+              -DGGML_BLAS=ON \
+              -DGGML_LTO=ON \
+              -DWHISPER_SDL2=ON \
+              -DWHISPER_BUILD_TESTS=OFF \
+              -DWHISPER_BUILD_SERVER=OFF
 
 # Colors for output
 RED = \033[0;31m
@@ -59,7 +68,7 @@ rebuild:
 	@if [ -d "$(BUILD_DIR)" ]; then \
 		echo "$(BLUE)Quick rebuild...$(NC)"; \
 		cd $(BUILD_DIR) && make -j$$(sysctl -n hw.ncpu); \
-		cp $(BUILD_DIR)/$(TARGET) . && chmod +x $(TARGET); \
+		cd .. && cp $(BUILD_DIR)/$(TARGET) . && chmod +x $(TARGET); \
 		echo "$(GREEN)✓ Rebuild complete$(NC)"; \
 	else \
 		echo "$(YELLOW)No build directory found, running full build...$(NC)"; \

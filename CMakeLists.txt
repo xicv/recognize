@@ -31,7 +31,6 @@ if(APPLE)
 endif()
 
 # SDL2 for audio capture
-find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
 
 # Create executable
@@ -54,10 +53,10 @@ target_include_directories(${TARGET} PRIVATE
     ${SDL2_INCLUDE_DIRS}
 )
 
-# Compile definitions
+# Compile definitions — only define WHISPER_COREML when the subproject enables it
+# GGML_USE_METAL is never read by any source code, so it is omitted
 target_compile_definitions(${TARGET} PRIVATE
-    WHISPER_COREML=1
-    GGML_USE_METAL=1
+    $<$<BOOL:${WHISPER_COREML}>:WHISPER_COREML=1>
 )
 
 # Link libraries
@@ -74,18 +73,21 @@ if(APPLE)
     
     # Set deployment target
     set_target_properties(${TARGET} PROPERTIES
-        MACOSX_DEPLOYMENT_TARGET "10.15"
+        MACOSX_DEPLOYMENT_TARGET "12.0"
     )
 endif()
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${TARGET} PRIVATE
-        -Wall -Wextra -Wpedantic
+        -Wall -Wextra
         -O3
         -march=native
     )
 endif()
+
+# Enable Link-Time Optimization for release builds
+set_property(TARGET ${TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 # Install target
 install(TARGETS ${TARGET} RUNTIME DESTINATION bin)

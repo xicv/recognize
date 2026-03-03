@@ -35,7 +35,7 @@ That's it! The CLI will guide you through model selection and start transcribing
 
 ### Prerequisites
 
-- macOS 10.15 or later
+- macOS 12.0 (Monterey) or later
 - Xcode Command Line Tools
 - Homebrew (recommended)
 
@@ -146,6 +146,7 @@ make list-models
 - `small` (488 MB) - 99 languages, higher accuracy
 - `medium` (1.5 GB) - 99 languages, professional
 - `large-v3` (3.1 GB) - 99 languages, best accuracy
+- `large-v3-turbo` (1.5 GB) - 99 languages, ~40% faster than large-v3
 
 ### Model Selection Guide
 
@@ -157,6 +158,7 @@ make list-models
 - `small.en` - Important meetings, interviews
 - `medium.en` - Professional transcription
 - `large` - Critical accuracy requirements
+- `large-v3-turbo` - Near large-v3 accuracy, ~40% faster
 
 **For Other Languages:**
 - Use multilingual versions (`base`, `small`, etc.)
@@ -662,14 +664,17 @@ make quick          # Rebuild + run (after small changes)
 
 ```
 src/cli/
-├── whisper-stream-coreml.cpp    # Main application (builds as 'recognize')
-├── model_manager.cpp/.h         # Model download/management
-├── CMakeLists.txt              # Build configuration
-├── Makefile                    # Build automation
-├── build.sh                    # Shell build script
-├── README.md                   # Basic usage
+├── recognize.cpp               # Main application (~1900 lines)
+├── model_manager.cpp/.h        # Model download/management, VAD model support
+├── config_manager.cpp/.h       # Multi-layer config (CLI > env > project > user)
+├── export_manager.cpp/.h       # Multi-format export (TXT, MD, JSON, CSV, SRT, VTT, XML)
+├── whisper_params.h            # Runtime parameters struct
+├── CMakeLists.txt              # Build configuration (CMake)
+├── Makefile                    # Build automation wrapper
+├── README.md                   # Quick reference
 ├── TUTORIAL.md                 # This file
-└── models/                     # Downloaded models (git-ignored)
+├── INSTALL.md                  # Installation guide
+└── CLAUDE.md                   # AI assistant context
 ```
 
 ## Examples Cookbook

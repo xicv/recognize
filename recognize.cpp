@@ -33,53 +33,69 @@ std::atomic<bool> g_interrupt_received(false);
 std::atomic<bool> g_is_recording(false);
 
 // Default meeting organization prompt
-const std::string DEFAULT_MEETING_PROMPT = R"(Organize this raw meeting transcription into structured Markdown. Output only Markdown, no preamble.
+const std::string DEFAULT_MEETING_PROMPT = R"(You are a senior executive assistant organizing a meeting transcription. Use ONLY content explicitly present in the transcript — do not infer, assume, or hallucinate details.
 
-## INPUT:
-[Paste raw transcription here]
+<transcript>
+[TRANSCRIPT_PLACEHOLDER]
+</transcript>
 
-## INSTRUCTIONS:
+<context>
+Meeting date: [MEETING_DATE]
+Duration: [DURATION_PLACEHOLDER]
+</context>
 
-1. Auto-classify meeting type: standup, planning, retrospective, brainstorm, 1-on-1, all-hands, or other.
-2. If [Speaker N] labels are present, attribute statements to speakers consistently.
-3. Clean filler words, fix transcription errors, remove repetitive content.
-4. Use [?] for unclear items needing verification.
+<instructions>
+1. Read the full transcript and classify the meeting type by these signals:
+   - Standup/sync: short updates per person, blockers
+   - Planning: estimations, priorities, timelines
+   - Retrospective: what went well, improvements
+   - Brainstorm: ideation, "what if", divergent thinking
+   - 1-on-1: two speakers, feedback, career discussion
+   - All-hands: announcements, company-wide updates
+   - Other: describe in 2-3 words
 
-## OUTPUT FORMAT:
+2. Tag each piece of information as SIGNAL (actionable: decisions, tasks, deadlines, owners) or NOISE (filler, off-topic, pleasantries). Only include SIGNAL content in the output.
 
-# [Meeting Title]
+3. If [Speaker N] labels appear, attribute statements consistently. If no labels, do not fabricate speaker identities.
 
-**Type**: [auto-classified type] | **Attendees**: [speaker list or count]
+4. Mark uncertain items with [?]. Do not guess names, dates, or numbers.
+
+5. Match the language of the transcript in your output.
+</instructions>
+
+<output_format>
+Output only Markdown. No preamble, no explanation outside the format below.
+
+---
+title: "[inferred meeting title]"
+type: "[classified type]"
+date: "[MEETING_DATE]"
+duration: "[DURATION_PLACEHOLDER]"
+speakers: [count or "unknown"]
+---
 
 ## Summary
-3-5 bullet points of key outcomes.
+- [3-5 bullet points of key outcomes, decisions, and next steps]
 
 ## Discussion Topics
 
 ### [Topic 1]
 - Key points discussed
-- Decisions made
-- Action items with owners
+- Relevant speaker attributions if available
 
 ### [Topic 2]
-[Repeat for each topic]
-
-## Action Items
-| Task | Owner | Priority | Deadline |
-|------|-------|----------|----------|
-| [task] | [person] | High/Med/Low | [date if mentioned] |
+[Repeat as needed]
 
 ## Decisions
-1. [Decision]: [rationale]
+1. **[Decision]**: [rationale or context]
+
+## Action Items
+| Owner | Task | Due Date |
+|-------|------|----------|
+| [person or Speaker N] | [specific task] | [date or TBD] |
 
 ## Open Issues
-- [Issue]: [proposed resolution]
-
-## Follow-up Email Draft
-
-Subject: [Meeting Title] - Summary & Action Items
-
-[Brief 3-sentence summary suitable for sending to participants]
+- [Unresolved item]: [proposed next step]
 
 <!-- meeting_metadata
 {
@@ -90,40 +106,43 @@ Subject: [Meeting Title] - Summary & Action Items
   "decisions": [count]
 }
 -->
-)";
+</output_format>)";
 
-// Signal handler for graceful shutdown
+// Signal handler for graceful shutdown — only sets atomic flag (async-signal-safe)
 void signal_handler(int signal) {
     if (signal == SIGINT) {
-        if (g_is_recording.load()) {
-            // If recording, ask for confirmation
-            std::cout << "\n\n⚠️  Recording in progress! Are you sure you want to quit? (y/N): " << std::flush;
-            
-            // Set terminal to raw mode to read single character
-            struct termios old_termios, new_termios;
-            tcgetattr(STDIN_FILENO, &old_termios);
-            new_termios = old_termios;
-            new_termios.c_lflag &= ~(ICANON | ECHO);
-            tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
-            
-            char c = getchar();
-            
-            // Restore terminal mode
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_termios);
-            
-            if (c == 'y' || c == 'Y') {
-                std::cout << "\n🛑 Stopping recording and exiting...\n" << std::endl;
-                g_interrupt_received.store(true);
-            } else {
-                std::cout << "\n▶️  Continuing recording...\n" << std::endl;
-                return;
-            }
+        g_interrupt_received.store(true);
+    }
+}
+
+// Check for interrupt in main loop and handle confirmation dialog safely
+static bool check_interrupt_with_confirmation() {
+    if (!g_interrupt_received.load()) return false;
+
+    if (g_is_recording.load()) {
+        std::cout << "\n\n Recording in progress! Are you sure you want to quit? (y/N): " << std::flush;
+
+        struct termios old_termios, new_termios;
+        tcgetattr(STDIN_FILENO, &old_termios);
+        new_termios = old_termios;
+        new_termios.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+
+        char c = getchar();
+
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_termios);
+
+        if (c == 'y' || c == 'Y') {
+            std::cout << "\n Stopping recording and exiting...\n" << std::endl;
+            return true;
         } else {
-            // Not recording, exit immediately
-            std::cout << "\n🛑 Exiting...\n" << std::endl;
-            g_interrupt_received.store(true);
+            std::cout << "\n Continuing recording...\n" << std::endl;
+            g_interrupt_received.store(false);
+            return false;
         }
     }
+    // Not recording — exit immediately
+    return true;
 }
 
 // Auto-copy functionality
@@ -167,6 +186,7 @@ struct MeetingSession {
     std::ostringstream transcription_buffer;
     int current_speaker_id = 1;
     int total_speakers = 1;
+    bool first_text_added = false;
 
     MeetingSession() {
         // Generate a unique session ID
@@ -178,6 +198,11 @@ struct MeetingSession {
     }
 
     void add_transcription(const std::string& text, bool speaker_turn = false) {
+        // Label the very first speaker on the first call
+        if (!first_text_added) {
+            first_text_added = true;
+            transcription_buffer << "[Speaker 1] ";
+        }
         if (speaker_turn) {
             current_speaker_id++;
             if (current_speaker_id > total_speakers) {
@@ -286,6 +311,12 @@ std::string filter_hallucinations(const std::string& text) {
         "Like and subscribe",
         "Thank you for listening",
         "Thanks for listening",
+        "Thank you.",
+        "Bye.",
+        "Goodbye.",
+        "Amara.org",
+        "This video is",
+        "In this video",
         "www.",
         "http://",
         "https://",
@@ -298,6 +329,8 @@ std::string filter_hallucinations(const std::string& text) {
         "[Music]",
         "(music)",
         "you",  // common single-word hallucination on silence - only remove if it's the entire text
+        "\xe5\xbe\xa1\xe8\xa6\x96\xe8\x81\xb4\xe3\x81\x82\xe3\x82\x8a\xe3\x81\x8c\xe3\x81\xa8\xe3\x81\x86\xe3\x81\x94\xe3\x81\x96\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99",  // Japanese: "Thank you for watching"
+        "\xe8\xb0\xa2\xe8\xb0\xa2\xe8\xa7\x82\xe7\x9c\x8b",  // Chinese: "Thanks for watching"
     };
 
     // Trim whitespace first
@@ -423,24 +456,31 @@ static std::vector<std::string> split_into_chunks(const std::string& text, int m
 
 // Execute Claude CLI with a prompt string, return output. Uses temp file for safety.
 static std::string invoke_claude_cli(const std::string& prompt_text, int timeout_seconds) {
-    char temp_path[] = "/tmp/recognize_meeting_XXXXXX";
-    int temp_fd = mkstemp(temp_path);
+    // Use ~/.recognize/tmp/ for temp files (avoid world-readable /tmp)
+    std::string tmp_dir = std::string(getenv("HOME")) + "/.recognize/tmp";
+    std::filesystem::create_directories(tmp_dir);
+    std::string tmp_template = tmp_dir + "/recognize_meeting_XXXXXX";
+    std::vector<char> temp_path(tmp_template.begin(), tmp_template.end());
+    temp_path.push_back('\0');
+    int temp_fd = mkstemp(temp_path.data());
     if (temp_fd == -1) return "";
+
+    std::string temp_path_str(temp_path.data());
 
     ssize_t written = write(temp_fd, prompt_text.c_str(), prompt_text.size());
     close(temp_fd);
 
     if (written < 0 || static_cast<size_t>(written) != prompt_text.size()) {
-        std::filesystem::remove(temp_path);
+        std::filesystem::remove(temp_path_str);
         return "";
     }
 
     std::ostringstream cmd;
-    cmd << "timeout " << timeout_seconds << " sh -c 'cat \"" << temp_path << "\" | claude -p -'";
+    cmd << "timeout " << timeout_seconds << " sh -c 'cat \"" << temp_path_str << "\" | claude -p -'";
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
-        std::filesystem::remove(temp_path);
+        std::filesystem::remove(temp_path_str);
         return "";
     }
 
@@ -451,7 +491,7 @@ static std::string invoke_claude_cli(const std::string& prompt_text, int timeout
     }
 
     int exit_code = pclose(pipe);
-    std::filesystem::remove(temp_path);
+    std::filesystem::remove(temp_path_str);
 
     if (exit_code != 0) return "";
     return output.str();
@@ -490,18 +530,60 @@ bool process_meeting_transcription(const std::string& transcription, const std::
     }
 
     // Format duration string
-    std::string duration_info;
+    std::string duration_str_val;
     if (duration_minutes > 0.0) {
-        std::ostringstream duration_str;
+        std::ostringstream ds;
         int hours = static_cast<int>(duration_minutes) / 60;
         int mins = static_cast<int>(duration_minutes) % 60;
         if (hours > 0) {
-            duration_str << hours << "h " << mins << "m";
+            ds << hours << "h " << mins << "m";
         } else {
-            duration_str << mins << "m";
+            ds << mins << "m";
         }
-        duration_info = "\n\n## MEETING DURATION: " + duration_str.str() + "\n";
+        duration_str_val = ds.str();
+    } else {
+        duration_str_val = "unknown";
     }
+
+    // Format meeting date
+    std::string meeting_date;
+    {
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        std::tm* tm_ptr = std::localtime(&time_t);
+        std::ostringstream date_ss;
+        date_ss << std::put_time(tm_ptr, "%Y-%m-%d");
+        meeting_date = date_ss.str();
+    }
+
+    // Helper to substitute all placeholders in a prompt
+    auto substitute_placeholders = [&](std::string& prompt, const std::string& transcript_content) {
+        // Replace transcript placeholder
+        size_t pos = prompt.find("[TRANSCRIPT_PLACEHOLDER]");
+        if (pos != std::string::npos) {
+            prompt.replace(pos, std::string("[TRANSCRIPT_PLACEHOLDER]").length(), transcript_content);
+        } else {
+            // Legacy placeholder support
+            pos = prompt.find("[Paste raw transcription here]");
+            if (pos != std::string::npos) {
+                prompt.replace(pos, std::string("[Paste raw transcription here]").length(), transcript_content);
+            } else {
+                prompt += "\n\n## RAW TRANSCRIPTION:\n" + transcript_content;
+            }
+        }
+        // Replace duration placeholder
+        pos = 0;
+        while ((pos = prompt.find("[DURATION_PLACEHOLDER]", pos)) != std::string::npos) {
+            prompt.replace(pos, std::string("[DURATION_PLACEHOLDER]").length(), duration_str_val);
+            pos += duration_str_val.length();
+        }
+        // Replace meeting date placeholder
+        pos = 0;
+        while ((pos = prompt.find("[MEETING_DATE]", pos)) != std::string::npos) {
+            prompt.replace(pos, std::string("[MEETING_DATE]").length(), meeting_date);
+            pos += meeting_date.length();
+        }
+    };
 
     int word_count = count_words(transcription);
     std::string final_output;
@@ -518,9 +600,13 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         for (size_t idx = 0; idx < chunks.size(); idx++) {
             std::cout << "Processing chunk " << (idx + 1) << "/" << chunks.size() << "..." << std::endl;
 
-            std::string chunk_prompt = "Extract action items, decisions, key topics, and speaker attributions from this meeting transcript chunk ("
+            std::string chunk_prompt = "Extract the following from this meeting transcript chunk ("
                 + std::to_string(idx + 1) + "/" + std::to_string(chunks.size())
-                + "). Output as concise bullet points grouped by topic. Preserve speaker labels.\n\n"
+                + "). Output as structured bullet points. Preserve [Speaker N] labels.\n\n"
+                + "DECISIONS: List each decision with rationale.\n"
+                + "ACTION ITEMS: List each task with owner and deadline.\n"
+                + "TOPICS: List key discussion topics with 2-3 bullet points each.\n"
+                + "KEY FACTS: Numbers, dates, names mentioned.\n\n"
                 + chunks[idx];
 
             std::string chunk_result = invoke_claude_cli(chunk_prompt, timeout_seconds);
@@ -535,13 +621,7 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         // Pass 2: Generate full summary from extracted data
         std::cout << "Generating final summary from extracted data..." << std::endl;
         std::string pass2_prompt = effective_prompt;
-        size_t placeholder_pos = pass2_prompt.find("[Paste raw transcription here]");
-        if (placeholder_pos != std::string::npos) {
-            pass2_prompt.replace(placeholder_pos, std::string("[Paste raw transcription here]").length(), combined_extracts);
-        } else {
-            pass2_prompt += "\n\n## EXTRACTED MEETING DATA:\n" + combined_extracts;
-        }
-        pass2_prompt += duration_info;
+        substitute_placeholders(pass2_prompt, combined_extracts);
 
         final_output = invoke_claude_cli(pass2_prompt, timeout_seconds);
         if (final_output.empty()) {
@@ -551,13 +631,7 @@ bool process_meeting_transcription(const std::string& transcription, const std::
     } else {
         // Single-pass mode
         std::string full_prompt = effective_prompt;
-        size_t placeholder_pos = full_prompt.find("[Paste raw transcription here]");
-        if (placeholder_pos != std::string::npos) {
-            full_prompt.replace(placeholder_pos, std::string("[Paste raw transcription here]").length(), transcription);
-        } else {
-            full_prompt += "\n\n## RAW TRANSCRIPTION:\n" + transcription;
-        }
-        full_prompt += duration_info;
+        substitute_placeholders(full_prompt, transcription);
 
         final_output = invoke_claude_cli(full_prompt, timeout_seconds);
         if (final_output.empty()) {
@@ -576,7 +650,16 @@ bool process_meeting_transcription(const std::string& transcription, const std::
     file << final_output;
     file << "\n\n<!--\n";
     file << "## Original Raw Transcription\n\n";
-    file << transcription;
+    // Escape --> in transcription to prevent breaking the HTML comment
+    std::string safe_transcription = transcription;
+    {
+        size_t pos = 0;
+        while ((pos = safe_transcription.find("-->", pos)) != std::string::npos) {
+            safe_transcription.replace(pos, 3, "--&gt;");
+            pos += 5;
+        }
+    }
+    file << safe_transcription;
     file << "\n-->\n";
     file.close();
 
@@ -689,15 +772,18 @@ int process_audio_segment(struct whisper_context* ctx, struct whisper_context* c
     }
     if (params.meeting_mode) {
         wparams.suppress_nst = true;
-        wparams.no_speech_thold = 0.7f;
-        wparams.entropy_thold = 2.0f;
+        wparams.no_speech_thold = 0.4f;  // Research-recommended: more permissive for meetings
+        wparams.entropy_thold = 2.2f;    // Slightly more permissive for natural speech
     }
     if (!params.vad_model_path.empty()) {
         wparams.vad = true;
         wparams.vad_model_path = params.vad_model_path.c_str();
         if (params.meeting_mode) {
-            wparams.vad_params.min_silence_duration_ms = 2000;
-            wparams.vad_params.speech_pad_ms = 400;
+            wparams.vad_params.threshold = 0.5f;
+            wparams.vad_params.min_speech_duration_ms = 500;
+            wparams.vad_params.min_silence_duration_ms = 800;   // Tuned: 2000 was too aggressive
+            wparams.vad_params.max_speech_duration_s = 30.0f;
+            wparams.vad_params.speech_pad_ms = 500;             // Slightly more padding
         }
     }
 
@@ -858,23 +944,30 @@ void print_colored_tokens(whisper_context * ctx, int i_segment, const whisper_pa
     }
 }
 
-// Speaker ID counter for export (persists across calls within a session)
-static int g_export_speaker_id = 1;
-static int g_export_total_speakers = 1;
+// Shared speaker tracking across export, meeting, and display paths
+struct SpeakerTracker {
+    int current_id = 0;
+    int total_speakers = 0;
+
+    int on_turn() {
+        ++current_id;
+        total_speakers = std::max(total_speakers, current_id);
+        return current_id;
+    }
+
+    int get_current() const { return current_id == 0 ? 1 : current_id; }
+};
 
 // Print bilingual results with proper formatting
 void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params,
-                             AutoCopySession& auto_copy_session, ExportSession& export_session, MeetingSession* meeting_session = nullptr) {
+                             AutoCopySession& auto_copy_session, ExportSession& export_session,
+                             SpeakerTracker& speaker_tracker, MeetingSession* meeting_session = nullptr) {
 
     for (const auto& seg : segments) {
-        // Track speaker IDs for export
-        int seg_speaker_id = g_export_speaker_id;
+        // Track speaker IDs via shared tracker
+        int seg_speaker_id = speaker_tracker.get_current();
         if (seg.speaker_turn) {
-            g_export_speaker_id++;
-            if (g_export_speaker_id > g_export_total_speakers) {
-                g_export_total_speakers = g_export_speaker_id;
-            }
-            seg_speaker_id = g_export_speaker_id;
+            seg_speaker_id = speaker_tracker.on_turn();
         }
         if (params.no_timestamps) {
             // Plain text mode
@@ -1478,13 +1571,33 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // Adjust thread count based on CoreML availability
+    // CoreML handles the encoder on ANE, so fewer CPU threads are needed for the decoder
+    {
+        int default_threads = std::min(4, (int32_t)std::thread::hardware_concurrency());
+        if (params.use_coreml && params.n_threads == default_threads) {
+            params.n_threads = 4; // CoreML: 4 is optimal for decoder-only CPU work
+        } else if (!params.use_coreml && params.n_threads <= 4) {
+            params.n_threads = std::min(8, (int32_t)std::thread::hardware_concurrency());
+        }
+    }
+
+    // Resolve VAD model path (supports "auto" for auto-download)
+    if (!params.vad_model_path.empty()) {
+        params.vad_model_path = model_manager.resolve_vad_model(params.vad_model_path);
+    }
+
     // Meeting mode: apply optimized defaults (can still be overridden by explicit CLI args)
     // These are set after CLI parsing so they only apply if the user didn't explicitly set them
     if (params.meeting_mode) {
+        // Auto-enable speaker turn detection for meetings
+        if (!params.tinydiarize) params.tinydiarize = true;
         // Better accuracy defaults for meeting transcription
-        if (params.keep_ms == 200) params.keep_ms = 2000;      // More audio context overlap
+        if (params.keep_ms == 200) params.keep_ms = 1000;      // Research: 1000ms optimal overlap
         if (params.step_ms == 3000) params.step_ms = 5000;     // Longer processing windows
         if (params.length_ms == 10000) params.length_ms = 15000;
+        if (params.beam_size <= 0) params.beam_size = 5;       // Beam search for meetings
+        if (params.freq_thold == 100.0f) params.freq_thold = 200.0f; // Better high-pass filter
         if (params.initial_prompt.empty()) {
             params.initial_prompt = "Meeting transcription with proper punctuation and capitalization.";
         }
@@ -1507,7 +1620,7 @@ int main(int argc, char ** argv) {
     if (!params.meeting_mode) {
         params.no_context |= use_vad;
     }
-    params.max_tokens     = 0;
+    if (use_vad) params.max_tokens = 0;
 
     // Init audio
     audio_async audio(params.length_ms);
@@ -1552,7 +1665,24 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "error: failed to initialize whisper context\n");
         return 2;
     }
-    
+
+    // CoreML warm-up: first inference triggers ANE compilation (2-5s delay)
+    // Running a dummy inference at startup moves this cost before "Start speaking"
+    #ifdef WHISPER_COREML
+    if (params.use_coreml) {
+        fprintf(stderr, "%s: warming up CoreML...\n", __func__);
+        std::vector<float> warmup(WHISPER_SAMPLE_RATE * 1, 0.0f); // 1 second of silence
+        whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+        wp.print_realtime   = false;
+        wp.print_progress   = false;
+        wp.print_timestamps = false;
+        wp.print_special    = false;
+        wp.n_threads        = params.n_threads;
+        whisper_full(ctx, wp, warmup.data(), warmup.size());
+        fprintf(stderr, "%s: CoreML ready\n", __func__);
+    }
+    #endif
+
     // Validate output mode
     if (params.output_mode != "original" && params.output_mode != "english" && params.output_mode != "bilingual") {
         fprintf(stderr, "error: invalid output mode '%s'. Valid modes: original, english, bilingual\n", params.output_mode.c_str());
@@ -1588,6 +1718,7 @@ int main(int argc, char ** argv) {
 
     std::vector<float> pcmf32    (n_samples_30s, 0.0f);
     std::vector<float> pcmf32_old;
+    pcmf32_old.reserve(n_samples_30s);
     std::vector<float> pcmf32_new(n_samples_30s, 0.0f);
 
     std::vector<whisper_token> prompt_tokens;
@@ -1688,7 +1819,8 @@ int main(int argc, char ** argv) {
         export_session.metadata.version = "recognize-1.0.0";
     }
 
-    // Initialize meeting session
+    // Initialize speaker tracker and meeting session
+    SpeakerTracker speaker_tracker;
     MeetingSession meeting_session;
     if (params.meeting_mode) {
         std::string output_filename = generate_meeting_filename(params.meeting_name);
@@ -1701,13 +1833,13 @@ int main(int argc, char ** argv) {
     const auto t_start = t_last;
 
     // Main audio processing loop
-    while (is_running && !g_interrupt_received.load()) {
+    while (is_running && !check_interrupt_with_confirmation()) {
         if (params.save_audio) {
             wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
         }
-        
+
         is_running = sdl_poll_events();
-        if (!is_running || g_interrupt_received.load()) {
+        if (!is_running || check_interrupt_with_confirmation()) {
             break;
         }
 
@@ -1715,7 +1847,7 @@ int main(int argc, char ** argv) {
         if (!use_vad) {
             while (true) {
                 is_running = sdl_poll_events();
-                if (!is_running || g_interrupt_received.load()) {
+                if (!is_running || check_interrupt_with_confirmation()) {
                     break;
                 }
                 
@@ -1767,58 +1899,9 @@ int main(int argc, char ** argv) {
             t_last = t_now;
         }
 
-        // Run inference with optimized parameters for CoreML
+        // Run inference via bilingual processing pipeline
         {
-            whisper_full_params wparams = whisper_full_default_params(params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
-
-            wparams.print_progress   = false;
-            wparams.print_special    = params.print_special;
-            wparams.print_realtime   = false;
-            wparams.print_timestamps = !params.no_timestamps;
-            wparams.translate        = params.translate;
-            wparams.single_segment   = !use_vad;
-            wparams.max_tokens       = params.max_tokens;
-            wparams.language         = params.language.c_str();
-            wparams.n_threads        = params.n_threads;
-            wparams.beam_search.beam_size = params.beam_size;
-            wparams.audio_ctx        = params.audio_ctx;
-            wparams.tdrz_enable      = params.tinydiarize;
-            wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
-            wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
-            wparams.prompt_n_tokens  = params.no_context ? 0       : prompt_tokens.size();
-
-            // Initial prompt support
-            if (!params.initial_prompt.empty()) {
-                wparams.initial_prompt = params.initial_prompt.c_str();
-                if (params.meeting_mode) {
-                    wparams.carry_initial_prompt = true;
-                }
-            }
-
-            // Suppress regex support
-            if (!params.suppress_regex.empty()) {
-                wparams.suppress_regex = params.suppress_regex.c_str();
-            }
-
-            // Meeting mode: tune whisper params for better accuracy
-            if (params.meeting_mode) {
-                wparams.suppress_nst = true;          // Suppress non-speech tokens
-                wparams.no_speech_thold = 0.7f;       // More aggressive silence suppression
-                wparams.entropy_thold = 2.0f;         // Catch repetitive hallucinations earlier
-            }
-
-            // Silero VAD integration
-            if (!params.vad_model_path.empty()) {
-                wparams.vad = true;
-                wparams.vad_model_path = params.vad_model_path.c_str();
-                // Meeting-optimized VAD settings
-                if (params.meeting_mode) {
-                    wparams.vad_params.min_silence_duration_ms = 2000; // Longer pauses in meetings
-                    wparams.vad_params.speech_pad_ms = 400;
-                }
-            }
-
-            // Use new bilingual processing
+            // Note: whisper_full_params are configured inside process_audio_segment()
             std::vector<BilingualSegment> bilingual_results;
             if (process_audio_segment(ctx, ctx_translate, params, pcmf32, bilingual_results) != 0) {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
@@ -1873,6 +1956,12 @@ int main(int argc, char ** argv) {
                         const char* seg_text = whisper_full_get_segment_text(ctx, i);
                         bool speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
 
+                        // Use shared speaker tracker
+                        int seg_speaker_id = speaker_tracker.get_current();
+                        if (speaker_turn) {
+                            seg_speaker_id = speaker_tracker.on_turn();
+                        }
+
                         if (params.meeting_mode) {
                             meeting_session.add_transcription(std::string(seg_text), speaker_turn);
                             meeting_session.add_transcription(" ");
@@ -1883,12 +1972,12 @@ int main(int argc, char ** argv) {
                         if (params.export_enabled) {
                             int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                             int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                            export_session.segments.emplace_back(t0 / 10, t1 / 10, std::string(seg_text), 1.0f, speaker_turn);
+                            export_session.segments.emplace_back(t0 / 10, t1 / 10, std::string(seg_text), 1.0f, speaker_turn, speaker_turn ? seg_speaker_id : -1);
                         }
                     }
                 } else {
                     // Use segment-based bilingual output
-                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session, &meeting_session);
+                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session, speaker_tracker, &meeting_session);
                 }
 
                 if (params.fname_out.length() > 0) {
@@ -1930,12 +2019,15 @@ int main(int argc, char ** argv) {
     
     // Perform export when session ends
     if (params.export_enabled) {
+        export_session.metadata.total_speakers = speaker_tracker.total_speakers;
         perform_export(export_session, params);
     }
 
     // Perform meeting processing when session ends
     if (params.meeting_mode) {
         std::string meeting_output_file = generate_meeting_filename(params.meeting_name);
+        // Sync speaker count from shared tracker
+        meeting_session.total_speakers = std::max(meeting_session.total_speakers, speaker_tracker.total_speakers);
         double duration_minutes = meeting_session.get_duration_minutes();
         std::cout << "\nProcessing meeting transcription with Claude CLI..." << std::endl;
         std::cout << "Duration: " << static_cast<int>(duration_minutes) << " minutes, "

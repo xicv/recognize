@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-macOS CLI application (`recognize`) for real-time speech recognition with CoreML acceleration, built on whisper.cpp. C++17, macOS 10.15+, Apple Silicon optimized.
+macOS CLI application (`recognize`) for real-time speech recognition with CoreML acceleration, built on whisper.cpp. C++17, macOS 12.0+, Apple Silicon optimized.
 
 ## Build & Dev Commands
 
@@ -61,10 +61,12 @@ Audio Input (SDL2)
 ### Build System
 
 CMake is the real build system; the top-level `Makefile` wraps it for convenience. Key CMake flags:
-- `WHISPER_COREML=ON` — CoreML acceleration (default on)
-- `GGML_USE_METAL=ON` — Metal GPU backend
+- `WHISPER_COREML=ON` + `WHISPER_COREML_ALLOW_FALLBACK=ON` — CoreML acceleration with fallback
+- `GGML_METAL=ON` + `GGML_METAL_EMBED_LIBRARY=ON` — Metal GPU backend with embedded shaders
+- `GGML_NATIVE=ON` + `GGML_ACCELERATE=ON` + `GGML_BLAS=ON` — Apple Silicon optimization
+- `GGML_LTO=ON` — Link-time optimization
 - `WHISPER_SDL2=ON` — Audio capture
-- Compiles with `-O3 -march=native`
+- Compiles with `-O3 -march=native`, LTO enabled
 
 The build copies the binary from `build/recognize` to `./recognize` in the source directory.
 
@@ -73,10 +75,13 @@ The build copies the binary from `build/recognize` to `./recognize` in the sourc
 - **No external JSON library**: `config_manager.cpp` implements its own JSON parsing (~1000 lines). Be careful when modifying config serialization.
 - **whisper.cpp examples as source files**: `common.cpp`, `common-whisper.cpp`, `common-sdl.cpp` are compiled directly from the whisper.cpp examples directory, not as a library.
 - **CoreML auto-detection**: If CoreML is enabled but no CoreML model is found, it auto-disables to prevent crashes.
-- **Global atomics for signal handling**: `g_interrupt_received` and `g_is_recording` are global `std::atomic<bool>` used for graceful Ctrl-C handling.
-- **Meeting mode**: On session end, writes transcription to a temp file and pipes to `claude` CLI via stdin (avoiding shell injection). Supports multi-pass summarization for long meetings (>20k words). Falls back to saving raw markdown if Claude CLI isn't available. Output wraps meeting content in HTML comments within the markdown file.
-- **Speaker tracking**: `MeetingSession` tracks speaker turns from whisper.cpp's `speaker_turn_next` API, labeling `[Speaker 1]`, `[Speaker 2]`, etc. Speaker IDs flow through to export formats.
-- **Meeting-optimized defaults**: When `--meeting` is active, automatically sets `keep_ms=2000`, `step_ms=5000`, `length_ms=15000`, `no_context=false`, `initial_prompt` for meeting transcription, and whisper parameters tuned for accuracy (`suppress_nst`, higher `no_speech_thold`, `entropy_thold`).
+- **Async-safe signal handling**: Signal handler only sets atomic flag; confirmation dialog runs in main loop via `check_interrupt_with_confirmation()`. `g_interrupt_received` and `g_is_recording` are global `std::atomic<bool>`.
+- **CoreML warm-up**: Runs a 1-second dummy inference at startup to trigger ANE compilation before recording starts.
+- **Context-aware thread count**: When CoreML is active, uses 4 threads (decoder-only); without CoreML, scales up to 8 threads.
+- **Meeting mode**: On session end, writes transcription to a temp file in `~/.recognize/tmp/` (not `/tmp/`) and pipes to `claude` CLI via stdin (avoiding shell injection). Supports multi-pass summarization for long meetings (>20k words). Falls back to saving raw markdown if Claude CLI isn't available. Output wraps meeting content in HTML comments (with `-->` escaped) within the markdown file.
+- **Unified speaker tracking**: `SpeakerTracker` struct shared across export, meeting, and display paths — eliminates the old dual-counter desync. `MeetingSession` labels `[Speaker 1]` on the very first segment.
+- **Meeting-optimized defaults**: When `--meeting` is active, auto-enables `tinydiarize`, sets `keep_ms=1000`, `step_ms=5000`, `length_ms=15000`, `beam_size=5`, `freq_thold=200`, `no_context=false`, `initial_prompt` for meeting transcription, and whisper parameters tuned for accuracy (`suppress_nst`, `no_speech_thold=0.4`, `entropy_thold=2.2`).
+- **VAD model auto-download**: `--vad-model auto` downloads Silero VAD v5.1.2 (~864KB) to `~/.recognize/models/`.
 
 ### CI/CD
 

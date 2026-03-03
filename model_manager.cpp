@@ -137,6 +137,17 @@ void ModelManager::init_model_registry() {
         3100,
         true
     };
+
+    models_["large-v3-turbo"] = {
+        "large-v3-turbo",
+        "Large v3 Turbo (1.5 GB) - 99 languages, ~40% faster than large-v3",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-encoder.mlmodelc.zip",
+        "ggml-large-v3-turbo.bin",
+        "ggml-large-v3-turbo-encoder.mlmodelc",
+        1500,
+        true
+    };
 }
 
 void ModelManager::ensure_models_directory() {
@@ -877,4 +888,52 @@ void ModelManager::cleanup_orphaned_files() {
     }
     
     std::cout << "\n✅ Cleanup completed.\n\n";
+}
+
+// VAD model management
+
+static const std::string VAD_MODEL_FILENAME = "ggml-silero-v5.1.2.bin";
+static const std::string VAD_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-silero-v5.1.2.bin";
+
+std::string ModelManager::get_vad_model_path() const {
+    return models_dir_ + "/" + VAD_MODEL_FILENAME;
+}
+
+bool ModelManager::download_vad_model(bool show_progress) {
+    ensure_models_directory();
+    std::string filepath = get_vad_model_path();
+    if (std::filesystem::exists(filepath)) {
+        return true;
+    }
+    std::cout << "Downloading Silero VAD model (~864 KB)..." << std::endl;
+    return download_file(VAD_MODEL_URL, filepath, show_progress);
+}
+
+std::string ModelManager::resolve_vad_model(const std::string& vad_model_arg) {
+    if (vad_model_arg.empty()) {
+        return "";
+    }
+
+    // "auto" means auto-download
+    if (vad_model_arg == "auto") {
+        if (download_vad_model()) {
+            return get_vad_model_path();
+        }
+        std::cerr << "Warning: Failed to download Silero VAD model" << std::endl;
+        return "";
+    }
+
+    // Treat as explicit path
+    if (std::filesystem::exists(vad_model_arg)) {
+        return vad_model_arg;
+    }
+
+    // Try as filename in models directory
+    std::string in_models = models_dir_ + "/" + vad_model_arg;
+    if (std::filesystem::exists(in_models)) {
+        return in_models;
+    }
+
+    std::cerr << "Warning: VAD model not found: " << vad_model_arg << std::endl;
+    return "";
 }
