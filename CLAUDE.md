@@ -57,7 +57,7 @@ Audio Input (SDL2)
 
 **`export_manager.h/cpp`** — Stateful export: add segments during recording, export on session end. Supports TXT, Markdown, JSON, CSV, SRT, VTT, XML. `TranscriptionSegment` includes `speaker_id` for speaker-labeled exports.
 
-**`whisper_params.h`** — Single struct holding all runtime parameters. Every feature flag and setting lives here. Includes `initial_prompt`, `suppress_regex`, `vad_model_path`, `meeting_timeout`, `meeting_max_single_pass`.
+**`whisper_params.h`** — Single struct holding all runtime parameters. Every feature flag and setting lives here. Includes `initial_prompt`, `suppress_regex`, `vad_model_path`, `meeting_timeout`, `meeting_max_single_pass`, `silence_timeout`.
 
 ### Build System
 
@@ -84,7 +84,8 @@ The build copies the binary from `build/recognize` to `./recognize` in the sourc
 - **Meeting-optimized defaults**: When `--meeting` is active, auto-enables `tinydiarize`, sets `keep_ms=1000`, `step_ms=5000`, `length_ms=15000`, `beam_size=5`, `freq_thold=200`, `no_context=false`, `initial_prompt` for meeting transcription, and whisper parameters tuned for accuracy (`suppress_nst`, `no_speech_thold=0.4`, `entropy_thold=2.2`).
 - **VAD model auto-download**: `--vad-model auto` downloads Silero VAD v5.1.2 (~864KB) to `~/.recognize/models/`.
 - **Pipe-friendly output**: When stdout is not a TTY, all informational messages (model loading, auto-copy, export, meeting status) go to stderr. Streaming display uses dual-buffer (finalized + current group) to output only clean finalized text on exit. No ANSI codes in pipe mode.
-- **Claude Code integration**: `/recognize` and `/recognize-stop` commands in `~/.claude/commands/` enable voice-to-text input. Background process with PID file, SIGINT graceful shutdown, `pbcopy` clipboard integration, transcript refinement and injection as user input.
+- **Claude Code integration**: `/recognize` and `/recognize-stop` commands in `~/.claude/commands/` enable voice-to-text input. Background process with PID file, SIGINT graceful shutdown, `pbcopy` clipboard integration, transcript refinement and injection as user input. `/recognize` uses 5s silence timeout by default; `/recognize c` for continuous mode; `/recognize m` for meeting mode.
+- **Silence timeout**: `--silence-timeout N` auto-stops recording after N seconds of no speech. Only triggers after first speech detected (prevents premature exit during warmup). Uses `is_running = false` for graceful exit. Automatically disabled in meeting mode. Checked in both VAD and non-VAD paths.
 
 ### CI/CD
 

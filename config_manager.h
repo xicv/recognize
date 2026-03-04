@@ -50,6 +50,9 @@ struct ConfigData {
     std::optional<std::string> meeting_initial_prompt;
     std::optional<int> meeting_timeout;
     std::optional<int> meeting_max_single_pass;
+
+    // Silence timeout settings
+    std::optional<float> silence_timeout;
 };
 
 class ConfigManager {

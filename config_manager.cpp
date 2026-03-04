@@ -158,6 +158,7 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.meeting_initial_prompt) params.initial_prompt = *effective.meeting_initial_prompt;
     if (effective.meeting_timeout) params.meeting_timeout = *effective.meeting_timeout;
     if (effective.meeting_max_single_pass) params.meeting_max_single_pass = *effective.meeting_max_single_pass;
+    if (effective.silence_timeout) params.silence_timeout = *effective.silence_timeout;
 }
 
 std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
@@ -220,7 +221,8 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"meeting_name", "meeting_name"},
         {"meeting_initial_prompt", "meeting_initial_prompt"},
         {"meeting_timeout", "meeting_timeout"},
-        {"meeting_max_single_pass", "meeting_max_single_pass"}
+        {"meeting_max_single_pass", "meeting_max_single_pass"},
+        {"silence_timeout", "silence_timeout"}
     };
 }
 
@@ -327,6 +329,7 @@ void ConfigManager::list_config() const {
     std::cout << "  meeting_initial_prompt        : " << (effective.meeting_initial_prompt ? "(custom)" : "(default)") << " - Initial whisper prompt for meeting mode\n";
     std::cout << "  meeting_timeout              : " << (effective.meeting_timeout ? std::to_string(*effective.meeting_timeout) : "120") << " - Claude CLI timeout in seconds\n";
     std::cout << "  meeting_max_single_pass      : " << (effective.meeting_max_single_pass ? std::to_string(*effective.meeting_max_single_pass) : "20000") << " - Max words before multi-pass summarization\n";
+    std::cout << "  silence_timeout              : " << (effective.silence_timeout ? std::to_string(*effective.silence_timeout) : "0") << " - Auto-stop after N seconds of silence (0 = disabled)\n";
     std::cout << "\n";
 
     std::cout << "💡 Configuration Examples:\n";
@@ -398,6 +401,7 @@ void ConfigManager::load_env_vars() {
     env_config_.meeting_initial_prompt = get_env_var("WHISPER_MEETING_INITIAL_PROMPT");
     env_config_.meeting_timeout = get_env_int("WHISPER_MEETING_TIMEOUT");
     env_config_.meeting_max_single_pass = get_env_int("WHISPER_MEETING_MAX_SINGLE_PASS");
+    env_config_.silence_timeout = get_env_float("WHISPER_SILENCE_TIMEOUT");
 }
 
 bool ConfigManager::validate_config() const {
@@ -495,6 +499,7 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.meeting_initial_prompt) merged.meeting_initial_prompt = config.meeting_initial_prompt;
         if (config.meeting_timeout) merged.meeting_timeout = config.meeting_timeout;
         if (config.meeting_max_single_pass) merged.meeting_max_single_pass = config.meeting_max_single_pass;
+        if (config.silence_timeout) merged.silence_timeout = config.silence_timeout;
     }
 
     return merged;
@@ -565,6 +570,7 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.meeting_initial_prompt) add_field("meeting_initial_prompt", *config.meeting_initial_prompt);
     if (config.meeting_timeout) add_int("meeting_timeout", *config.meeting_timeout);
     if (config.meeting_max_single_pass) add_int("meeting_max_single_pass", *config.meeting_max_single_pass);
+    if (config.silence_timeout) add_float("silence_timeout", *config.silence_timeout);
 
     json << "\n}\n";
     return json.str();
@@ -641,6 +647,7 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.meeting_initial_prompt = get_string("meeting_initial_prompt");
     config.meeting_timeout = get_int("meeting_timeout");
     config.meeting_max_single_pass = get_int("meeting_max_single_pass");
+    config.silence_timeout = get_float("silence_timeout");
 
     return config;
 }
@@ -723,6 +730,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "meeting_initial_prompt") config.meeting_initial_prompt = std::nullopt;
         else if (key == "meeting_timeout") config.meeting_timeout = std::nullopt;
         else if (key == "meeting_max_single_pass") config.meeting_max_single_pass = std::nullopt;
+        else if (key == "silence_timeout") config.silence_timeout = std::nullopt;
         else return false;
         return true;
     }
@@ -814,6 +822,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "meeting_initial_prompt") config.meeting_initial_prompt = value;
         else if (key == "meeting_timeout") config.meeting_timeout = std::stoi(value);
         else if (key == "meeting_max_single_pass") config.meeting_max_single_pass = std::stoi(value);
+        else if (key == "silence_timeout") config.silence_timeout = std::stof(value);
         else return false;
     } catch (...) {
         return false;
@@ -855,6 +864,7 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "meeting_initial_prompt") return config.meeting_initial_prompt;
     else if (key == "meeting_timeout") return config.meeting_timeout ? std::make_optional(std::to_string(*config.meeting_timeout)) : std::nullopt;
     else if (key == "meeting_max_single_pass") return config.meeting_max_single_pass ? std::make_optional(std::to_string(*config.meeting_max_single_pass)) : std::nullopt;
+    else if (key == "silence_timeout") return config.silence_timeout ? std::make_optional(std::to_string(*config.silence_timeout)) : std::nullopt;
 
     return std::nullopt;
 }

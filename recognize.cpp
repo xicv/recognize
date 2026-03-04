@@ -1321,6 +1321,8 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "--suppress-regex")                   { if (!require_arg(i, arg)) return false; params.suppress_regex = argv[++i]; }
         // VAD model
         else if (arg == "--vad-model")                        { if (!require_arg(i, arg)) return false; params.vad_model_path = argv[++i]; }
+        // Silence timeout
+        else if (arg == "--silence-timeout")                  { if (!require_arg(i, arg)) return false; params.silence_timeout = std::stof(argv[++i]); }
         // Config management options
         else if (arg == "config") {
             if (i + 1 < argc) {
@@ -1450,6 +1452,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "            --initial-prompt TEXT [%-7s] initial prompt for conditioning\n", params.initial_prompt.empty() ? "none" : "set");
     fprintf(stderr, "            --suppress-regex PAT  [%-7s] regex pattern to suppress from output\n", params.suppress_regex.empty() ? "none" : "set");
     fprintf(stderr, "            --vad-model PATH      [%-7s] Silero VAD model path for speech detection\n", params.vad_model_path.empty() ? "none" : "set");
+    fprintf(stderr, "            --silence-timeout N   [%-7.1f] auto-stop after N seconds of silence (0 = disabled)\n", params.silence_timeout);
     fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models      list available models for download\n");
@@ -1503,6 +1506,11 @@ int main(int argc, char ** argv) {
     config_manager.apply_to_params(params);
 
     if (whisper_params_parse(argc, argv, params) == false) {
+        return 1;
+    }
+
+    if (params.silence_timeout < 0.0f) {
+        fprintf(stderr, "error: --silence-timeout must be non-negative\n");
         return 1;
     }
 
@@ -1845,6 +1853,11 @@ int main(int argc, char ** argv) {
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
 
+    // Silence timeout state
+    auto t_last_speech = std::chrono::high_resolution_clock::now();
+    bool has_spoken = false;
+    const bool silence_timeout_enabled = params.silence_timeout > 0.0f && !params.meeting_mode;
+
     // Main audio processing loop
     while (is_running && !check_interrupt_with_confirmation()) {
         if (params.save_audio) {
@@ -1904,7 +1917,20 @@ int main(int argc, char ** argv) {
 
             if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false)) {
                 audio.get(params.length_ms, pcmf32);
+                if (silence_timeout_enabled) {
+                    has_spoken = true;
+                    t_last_speech = std::chrono::high_resolution_clock::now();
+                }
             } else {
+                if (silence_timeout_enabled && has_spoken) {
+                    const auto t_silence = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now() - t_last_speech).count();
+                    if (t_silence >= static_cast<int64_t>(params.silence_timeout * 1000.0f)) {
+                        fprintf(stderr, "[Silence timeout: %.1fs, auto-stopping]\n", params.silence_timeout);
+                        is_running = false;
+                        break;
+                    }
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
@@ -1937,6 +1963,22 @@ int main(int argc, char ** argv) {
                         return s.original_text.empty() && s.english_text.empty();
                     }),
                 bilingual_results.end());
+
+            // Silence timeout tracking (non-VAD path)
+            if (silence_timeout_enabled) {
+                if (!bilingual_results.empty()) {
+                    has_spoken = true;
+                    t_last_speech = std::chrono::high_resolution_clock::now();
+                } else if (has_spoken) {
+                    const auto t_silence = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now() - t_last_speech).count();
+                    if (t_silence >= static_cast<int64_t>(params.silence_timeout * 1000.0f)) {
+                        fprintf(stderr, "[Silence timeout: %.1fs, auto-stopping]\n", params.silence_timeout);
+                        is_running = false;
+                        break;
+                    }
+                }
+            }
 
             // Print results
             {

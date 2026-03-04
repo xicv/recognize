@@ -24,6 +24,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **Hallucination filtering** to remove phantom phrases and deduplicate repeated text
 - **Multi-pass summarization** for long meetings (>20k words) with chunk-based processing
 - **Transcription accuracy tuning** with initial prompts, suppress regex, and Silero VAD support
+- **Silence timeout** auto-stops recording after configurable seconds of silence (ideal for voice input workflows)
 
 ## Requirements
 
@@ -260,6 +261,7 @@ recognize --meeting --meeting-timeout 180 --meeting-max-single-pass 15000
 - `--suppress-regex PAT` - Regex pattern to suppress from output
 - `--vad-model PATH|auto` - Silero VAD model path (`auto` downloads automatically)
 - `-fa, --flash-attn` - Flash attention during inference (default: enabled)
+- `--silence-timeout N` - Auto-stop after N seconds of silence (0 = disabled, default: 0). Only triggers after first speech is detected. Excluded from meeting mode.
 
 ### Audio Options
 - `-c, --capture` - Audio capture device ID (default: -1 for default)
@@ -353,6 +355,7 @@ export WHISPER_MEETING=true
 export WHISPER_MEETING_PROMPT="custom prompt"
 export WHISPER_MEETING_NAME=standup
 export WHISPER_MEETING_TIMEOUT=180
+export WHISPER_SILENCE_TIMEOUT=5
 ```
 
 ### Configuration File Format
@@ -376,7 +379,8 @@ Configuration files use JSON format:
   "auto_copy_max_size_bytes": 1048576,
   "meeting_mode": false,
   "meeting_timeout": 120,
-  "meeting_max_single_pass": 20000
+  "meeting_max_single_pass": 20000,
+  "silence_timeout": 0
 }
 ```
 
@@ -425,6 +429,9 @@ Configuration files use JSON format:
 - `meeting_initial_prompt` - Initial whisper prompt used during meeting mode transcription
 - `meeting_timeout` - Timeout for Claude CLI in seconds (default: 120)
 - `meeting_max_single_pass` - Max words before multi-pass summarization (default: 20000)
+
+### Silence Timeout Configuration
+- `silence_timeout` - Auto-stop after N seconds of silence (default: 0 = disabled). Only activates after first speech is detected. Automatically excluded in meeting mode.
 
 ## Multi-Language Speech Transcription
 
@@ -527,8 +534,10 @@ The `-f, --file` flag also writes transcription text to a file (in addition to s
 
 recognize can be used as a voice-to-text input method for [Claude Code](https://claude.ai/code) via custom commands:
 
-1. **`/recognize`** — starts background recording, capturing audio to a session file
-2. **`/recognize-stop`** — stops recording, copies transcript to clipboard, refines grammar, and injects the text as a user message
+1. **`/recognize`** — starts background recording with 5s silence auto-stop (exits automatically when you stop speaking)
+2. **`/recognize c`** — continuous recording mode (no auto-stop, manual `/recognize-stop` required)
+3. **`/recognize m`** — meeting mode with large-v3-turbo model and AI summarization
+4. **`/recognize-stop`** — stops recording, copies transcript to clipboard, refines grammar, and injects the text as a user message
 
 **Setup:** Place command files in `~/.claude/commands/`:
 - `recognize.md` — starts the background process with `nohup recognize --no-export --no-timestamps > ~/.recognize/claude-session.txt 2>/dev/null &`

@@ -70,4 +70,7 @@ struct whisper_params {
 
     // VAD model settings
     std::string vad_model_path = "";   // Path to Silero VAD model
+
+    // Silence timeout settings
+    float silence_timeout = 0.0f;      // Auto-stop after N seconds of silence (0 = disabled)
 };
