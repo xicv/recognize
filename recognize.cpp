@@ -1893,6 +1893,23 @@ int main(int argc, char ** argv) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
+            // Silence timeout: check new audio for speech before inference
+            if (silence_timeout_enabled) {
+                bool new_audio_has_speech = ::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false);
+                if (new_audio_has_speech) {
+                    has_spoken = true;
+                    t_last_speech = std::chrono::high_resolution_clock::now();
+                } else if (has_spoken) {
+                    const auto t_silence = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now() - t_last_speech).count();
+                    if (t_silence >= static_cast<int64_t>(params.silence_timeout * 1000.0f)) {
+                        fprintf(stderr, "[Silence timeout: %.1fs, auto-stopping]\n", params.silence_timeout);
+                        is_running = false;
+                        break;
+                    }
+                }
+            }
+
             const int n_samples_new = pcmf32_new.size();
             const int n_samples_take = std::min((int) pcmf32_old.size(), std::max(0, n_samples_keep + n_samples_len - n_samples_new));
 
@@ -1963,22 +1980,6 @@ int main(int argc, char ** argv) {
                         return s.original_text.empty() && s.english_text.empty();
                     }),
                 bilingual_results.end());
-
-            // Silence timeout tracking (non-VAD path)
-            if (silence_timeout_enabled) {
-                if (!bilingual_results.empty()) {
-                    has_spoken = true;
-                    t_last_speech = std::chrono::high_resolution_clock::now();
-                } else if (has_spoken) {
-                    const auto t_silence = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::high_resolution_clock::now() - t_last_speech).count();
-                    if (t_silence >= static_cast<int64_t>(params.silence_timeout * 1000.0f)) {
-                        fprintf(stderr, "[Silence timeout: %.1fs, auto-stopping]\n", params.silence_timeout);
-                        is_running = false;
-                        break;
-                    }
-                }
-            }
 
             // Print results
             {
