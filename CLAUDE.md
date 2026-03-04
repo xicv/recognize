@@ -43,7 +43,8 @@ Audio Input (SDL2)
 **`recognize.cpp`** (~1900 lines) — Monolithic main file containing:
 - CLI argument parsing (`whisper_params_parse`) with bounds-checked argument access
 - Real-time audio capture loop with sliding window / VAD modes
-- Signal handler with graceful shutdown (Ctrl-C confirmation during recording)
+- Signal handler with graceful shutdown (Ctrl-C confirmation during recording, `isatty()` skip when no TTY)
+- Pipe-friendly output mode: detects `!isatty(STDOUT_FILENO)` to suppress ANSI codes, route info to stderr, and use dual-buffer (finalized + current) text accumulation for clean output on exit
 - Auto-copy session management (`AutoCopySession` struct)
 - Export session management (`ExportSession` struct)
 - Meeting session management (`MeetingSession` struct) with speaker tracking and multi-pass summarization
@@ -82,6 +83,8 @@ The build copies the binary from `build/recognize` to `./recognize` in the sourc
 - **Unified speaker tracking**: `SpeakerTracker` struct shared across export, meeting, and display paths — eliminates the old dual-counter desync. `MeetingSession` labels `[Speaker 1]` on the very first segment.
 - **Meeting-optimized defaults**: When `--meeting` is active, auto-enables `tinydiarize`, sets `keep_ms=1000`, `step_ms=5000`, `length_ms=15000`, `beam_size=5`, `freq_thold=200`, `no_context=false`, `initial_prompt` for meeting transcription, and whisper parameters tuned for accuracy (`suppress_nst`, `no_speech_thold=0.4`, `entropy_thold=2.2`).
 - **VAD model auto-download**: `--vad-model auto` downloads Silero VAD v5.1.2 (~864KB) to `~/.recognize/models/`.
+- **Pipe-friendly output**: When stdout is not a TTY, all informational messages (model loading, auto-copy, export, meeting status) go to stderr. Streaming display uses dual-buffer (finalized + current group) to output only clean finalized text on exit. No ANSI codes in pipe mode.
+- **Claude Code integration**: `/recognize` and `/recognize-stop` commands in `~/.claude/commands/` enable voice-to-text input. Background process with PID file, SIGINT graceful shutdown, `pbcopy` clipboard integration, transcript refinement and injection as user input.
 
 ### CI/CD
 

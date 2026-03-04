@@ -120,6 +120,11 @@ static bool check_interrupt_with_confirmation() {
     if (!g_interrupt_received.load()) return false;
 
     if (g_is_recording.load()) {
+        // If no TTY attached (background process), exit immediately
+        if (!isatty(STDIN_FILENO)) {
+            return true;
+        }
+
         std::cout << "\n\n Recording in progress! Are you sure you want to quit? (y/N): " << std::flush;
 
         struct termios old_termios, new_termios;
@@ -663,7 +668,7 @@ bool process_meeting_transcription(const std::string& transcription, const std::
     file << "\n-->\n";
     file.close();
 
-    std::cout << "Meeting transcription processed and saved to: " << output_file << std::endl;
+    std::cerr << "Meeting transcription processed and saved to: " << output_file << std::endl;
     return true;
 }
 
@@ -697,33 +702,33 @@ void perform_auto_copy(AutoCopySession& session, const whisper_params& params) {
     content = trim_whitespace(content);
     
     if (content.empty()) {
-        printf("Auto-copy skipped: no content to copy.\n");
+        fprintf(stderr, "Auto-copy skipped: no content to copy.\n");
         return;
     }
-    
+
     auto now = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::hours>(now - session.start_time);
-    
+
     // Check duration limit
     if (duration.count() > params.auto_copy_max_duration_hours) {
-        printf("Auto-copy skipped: session duration (%ld hours) exceeded limit (%d hours).\n", 
+        fprintf(stderr, "Auto-copy skipped: session duration (%ld hours) exceeded limit (%d hours).\n",
                duration.count(), params.auto_copy_max_duration_hours);
         return;
     }
     
     // Check size limit
     if (content.size() > static_cast<size_t>(params.auto_copy_max_size_bytes)) {
-        printf("Auto-copy skipped: content size (%zu bytes) exceeded limit (%d bytes).\n", 
+        fprintf(stderr, "Auto-copy skipped: content size (%zu bytes) exceeded limit (%d bytes).\n",
                content.size(), params.auto_copy_max_size_bytes);
         return;
     }
-    
+
     // Perform the copy
     if (copy_to_clipboard_macos(content)) {
-        printf("Transcription copied.\n");
+        fprintf(stderr, "Transcription copied.\n");
         session.has_been_copied = true;
     } else {
-        printf("Auto-copy failed: unable to copy to clipboard.\n");
+        fprintf(stderr, "Auto-copy failed: unable to copy to clipboard.\n");
     }
 }
 
@@ -961,7 +966,14 @@ struct SpeakerTracker {
 // Print bilingual results with proper formatting
 void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params,
                              AutoCopySession& auto_copy_session, ExportSession& export_session,
-                             SpeakerTracker& speaker_tracker, MeetingSession* meeting_session = nullptr) {
+                             SpeakerTracker& speaker_tracker, MeetingSession* meeting_session = nullptr,
+                             bool tty_output = true, std::ostringstream* pipe_buffer = nullptr) {
+
+    // Helper: route text to stdout (TTY) or pipe buffer
+    auto out = [&](const std::string& text) {
+        if (tty_output) { printf("%s", text.c_str()); }
+        if (pipe_buffer) { *pipe_buffer << text; }
+    };
 
     for (const auto& seg : segments) {
         // Track speaker IDs via shared tracker
@@ -972,13 +984,8 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
         if (params.no_timestamps) {
             // Plain text mode
             if (params.output_mode == "original") {
-                if (params.print_colors) {
-                    // Color printing not implemented for bilingual mode
-                    printf("%s", seg.original_text.c_str());
-                } else {
-                    printf("%s", seg.original_text.c_str());
-                }
-                
+                out(seg.original_text);
+
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << seg.original_text;
@@ -1001,7 +1008,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 }
             }
             else if (params.output_mode == "english") {
-                printf("%s", seg.english_text.c_str());
+                out(seg.english_text);
 
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
@@ -1028,9 +1035,9 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 // Detect language for prefixes
                 std::string lang_code = params.language;
                 if (lang_code == "auto") lang_code = "orig";
-                
-                printf("%s: %s\n", lang_code.c_str(), seg.original_text.c_str());
-                printf("en: %s\n", seg.english_text.c_str());
+
+                out(lang_code + ": " + seg.original_text + "\n");
+                out("en: " + seg.english_text + "\n");
                 
                 // Add to auto-copy buffer (bilingual format)
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
@@ -1064,10 +1071,10 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
             std::string timestamp_prefix = "[" + to_timestamp(seg.t0, false) + " --> " + to_timestamp(seg.t1, false) + "]  ";
             
             if (params.output_mode == "original") {
-                printf("%s%s", timestamp_prefix.c_str(), seg.original_text.c_str());
-                if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
-                printf("\n");
-                
+                out(timestamp_prefix + seg.original_text);
+                if (seg.speaker_turn) out(" [SPEAKER_TURN]");
+                out("\n");
+
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
                     auto_copy_session.transcription_buffer << timestamp_prefix << seg.original_text;
@@ -1094,9 +1101,9 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 }
             }
             else if (params.output_mode == "english") {
-                printf("%s%s", timestamp_prefix.c_str(), seg.english_text.c_str());
-                if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
-                printf("\n");
+                out(timestamp_prefix + seg.english_text);
+                if (seg.speaker_turn) out(" [SPEAKER_TURN]");
+                out("\n");
 
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
@@ -1128,10 +1135,10 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 std::string lang_code = params.language;
                 if (lang_code == "auto") lang_code = "orig";
 
-                printf("%s%s: %s\n", timestamp_prefix.c_str(), lang_code.c_str(), seg.original_text.c_str());
-                printf("%sen: %s", timestamp_prefix.c_str(), seg.english_text.c_str());
-                if (seg.speaker_turn) printf(" [SPEAKER_TURN]");
-                printf("\n");
+                out(timestamp_prefix + lang_code + ": " + seg.original_text + "\n");
+                out(timestamp_prefix + "en: " + seg.english_text);
+                if (seg.speaker_turn) out(" [SPEAKER_TURN]");
+                out("\n");
 
                 // Add to auto-copy buffer
                 if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
@@ -1542,7 +1549,7 @@ int main(int argc, char ** argv) {
     // Resolve model (with auto-download if needed)
     std::string resolved_model = model_manager.resolve_model(params.model, params.use_coreml);
     if (resolved_model.empty()) {
-        std::cout << "\n❌ No model available. Exiting.\n";
+        std::cerr << "\n❌ No model available. Exiting.\n";
         return 1;
     }
     
@@ -1561,9 +1568,9 @@ int main(int argc, char ** argv) {
                 std::string coreml_path = model_manager.get_coreml_model_path(name);
                 if (model_manager.coreml_model_exists(name)) {
                     params.coreml_model = coreml_path;
-                    std::cout << "✅ Auto-detected CoreML model: " << coreml_path << "\n";
+                    std::cerr << "✅ Auto-detected CoreML model: " << coreml_path << "\n";
                 } else {
-                    std::cout << "⚠️  CoreML enabled but model not available: " << coreml_path << "\n";
+                    std::cerr << "⚠️  CoreML enabled but model not available: " << coreml_path << "\n";
                     params.use_coreml = false;  // Disable CoreML to prevent crashes
                 }
                 break;
@@ -1768,6 +1775,12 @@ int main(int argc, char ** argv) {
     int n_iter = 0;
     bool is_running = true;
 
+    const bool stdout_is_tty = isatty(STDOUT_FILENO);
+    // When stdout is not a TTY (redirected to file/pipe), accumulate text
+    // and dump it on exit instead of streaming with ANSI codes
+    std::string pipe_finalized_text;
+    std::ostringstream pipe_current_text;
+
     std::ofstream fout;
     if (params.fname_out.length() > 0) {
         fout.open(params.fname_out);
@@ -1786,22 +1799,22 @@ int main(int argc, char ** argv) {
         wavWriter.open(filename, WHISPER_SAMPLE_RATE, 16, 1);
     }
     
-    printf("[Start speaking]\n");
-    fflush(stdout);
+    fprintf(stderr, "[Start speaking]\n");
+    fflush(stderr);
 
     // Initialize auto-copy session
     AutoCopySession auto_copy_session;
     if (params.auto_copy_enabled) {
-        printf("Auto-copy enabled (Session ID: %s, Max Duration: %d hours, Max Size: %d bytes)\n", 
-               auto_copy_session.session_id.c_str(), 
-               params.auto_copy_max_duration_hours, 
+        fprintf(stderr, "Auto-copy enabled (Session ID: %s, Max Duration: %d hours, Max Size: %d bytes)\n",
+               auto_copy_session.session_id.c_str(),
+               params.auto_copy_max_duration_hours,
                params.auto_copy_max_size_bytes);
     }
     
     // Initialize export session
     ExportSession export_session;
     if (params.export_enabled) {
-        printf("Export enabled (Session ID: %s, Format: %s, File: %s)\n",
+        fprintf(stderr, "Export enabled (Session ID: %s, Format: %s, File: %s)\n",
                export_session.session_id.c_str(),
                params.export_format.c_str(),
                params.export_auto_filename ? "auto-generated" : params.export_file.c_str());
@@ -1824,9 +1837,9 @@ int main(int argc, char ** argv) {
     MeetingSession meeting_session;
     if (params.meeting_mode) {
         std::string output_filename = generate_meeting_filename(params.meeting_name);
-        printf("Meeting mode enabled (Session ID: %s, Output: %s)\n",
+        fprintf(stderr, "Meeting mode enabled (Session ID: %s, Output: %s)\n",
                meeting_session.session_id.c_str(), output_filename.c_str());
-        printf("Note: Will save to [YYYY]-[MM]-[DD].md with AI organization (or raw transcription on failure).\n");
+        fprintf(stderr, "Note: Will save to [YYYY]-[MM]-[DD].md with AI organization (or raw transcription on failure).\n");
     }
 
     auto t_last  = std::chrono::high_resolution_clock::now();
@@ -1927,32 +1940,43 @@ int main(int argc, char ** argv) {
 
             // Print results
             {
+                // For pipe mode: clear current buffer before re-rendering
+                if (!stdout_is_tty && !use_vad) {
+                    pipe_current_text.str("");
+                    pipe_current_text.clear();
+                }
+
                 if (!use_vad) {
-                    printf("\33[2K\r");
-                    printf("%s", std::string(100, ' ').c_str());
-                    printf("\33[2K\r");
+                    if (stdout_is_tty) {
+                        printf("\33[2K\r");
+                        printf("%s", std::string(100, ' ').c_str());
+                        printf("\33[2K\r");
+                    }
                 } else {
                     const int64_t t1 = (t_last - t_start).count()/1000000;
                     const int64_t t0 = std::max(0.0, t1 - pcmf32.size()*1000.0/WHISPER_SAMPLE_RATE);
-                    printf("\n### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
-                    printf("\n");
+                    if (stdout_is_tty) {
+                        printf("\n### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
+                        printf("\n");
+                    }
                 }
-                
+
                 // Use colored token output if enabled, otherwise use segment-based output
                 if (params.print_colors) {
                     // Print tokens directly from whisper context with colors
                     const int n_segments = whisper_full_n_segments(ctx);
                     for (int i = 0; i < n_segments; ++i) {
-                        if (!params.no_timestamps) {
-                            const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-                            const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                            printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
+                        if (stdout_is_tty) {
+                            if (!params.no_timestamps) {
+                                const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
+                                const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
+                                printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
+                            }
+                            print_colored_tokens(ctx, i, params);
+                            printf("\n");
                         }
 
-                        print_colored_tokens(ctx, i, params);
-                        printf("\n");
-
-                        // Accumulate text for meeting/auto-copy/export even in color mode
+                        // Accumulate text for meeting/auto-copy/export/pipe even in color mode
                         const char* seg_text = whisper_full_get_segment_text(ctx, i);
                         bool speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
 
@@ -1962,6 +1986,9 @@ int main(int argc, char ** argv) {
                             seg_speaker_id = speaker_tracker.on_turn();
                         }
 
+                        if (!stdout_is_tty) {
+                            pipe_current_text << seg_text;
+                        }
                         if (params.meeting_mode) {
                             meeting_session.add_transcription(std::string(seg_text), speaker_turn);
                             meeting_session.add_transcription(" ");
@@ -1977,22 +2004,48 @@ int main(int argc, char ** argv) {
                     }
                 } else {
                     // Use segment-based bilingual output
-                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session, speaker_tracker, &meeting_session);
+                    std::ostringstream* pbuf = stdout_is_tty ? nullptr : &pipe_current_text;
+                    print_bilingual_results(bilingual_results, params, auto_copy_session, export_session, speaker_tracker, &meeting_session,
+                                            stdout_is_tty, pbuf);
                 }
 
                 if (params.fname_out.length() > 0) {
+                    const int n_seg = whisper_full_n_segments(ctx);
+                    for (int i = 0; i < n_seg; ++i) {
+                        const char* seg_text = whisper_full_get_segment_text(ctx, i);
+                        if (seg_text) {
+                            fout << seg_text;
+                        }
+                    }
                     fout << std::endl;
+                    fout.flush();
                 }
 
                 if (use_vad) {
-                    printf("\n### Transcription %d END\n", n_iter);
+                    if (stdout_is_tty) {
+                        printf("\n### Transcription %d END\n", n_iter);
+                    }
+                    // In VAD mode, each iteration is independent — finalize immediately
+                    if (!stdout_is_tty) {
+                        pipe_finalized_text += pipe_current_text.str();
+                        pipe_current_text.str("");
+                        pipe_current_text.clear();
+                    }
                 }
             }
 
             ++n_iter;
 
             if (!use_vad && (n_iter % n_new_line) == 0) {
-                printf("\n");
+                if (stdout_is_tty) {
+                    printf("\n");
+                }
+                // Finalize current group's text for pipe output
+                if (!stdout_is_tty) {
+                    pipe_finalized_text += pipe_current_text.str();
+                    pipe_current_text.str("");
+                    pipe_current_text.clear();
+                }
                 pcmf32_old = std::vector<float>(pcmf32.end() - n_samples_keep, pcmf32.end());
 
                 if (!params.no_context) {
@@ -2011,7 +2064,16 @@ int main(int argc, char ** argv) {
     }
 
     audio.pause();
-    
+
+    // Dump accumulated text to stdout when not a TTY (pipe/redirect mode)
+    if (!stdout_is_tty) {
+        std::string final_text = pipe_finalized_text + pipe_current_text.str();
+        if (!final_text.empty()) {
+            printf("%s\n", final_text.c_str());
+            fflush(stdout);
+        }
+    }
+
     // Perform auto-copy when session ends
     if (params.auto_copy_enabled) {
         perform_auto_copy(auto_copy_session, params);
@@ -2029,8 +2091,8 @@ int main(int argc, char ** argv) {
         // Sync speaker count from shared tracker
         meeting_session.total_speakers = std::max(meeting_session.total_speakers, speaker_tracker.total_speakers);
         double duration_minutes = meeting_session.get_duration_minutes();
-        std::cout << "\nProcessing meeting transcription with Claude CLI..." << std::endl;
-        std::cout << "Duration: " << static_cast<int>(duration_minutes) << " minutes, "
+        std::cerr << "\nProcessing meeting transcription with Claude CLI..." << std::endl;
+        std::cerr << "Duration: " << static_cast<int>(duration_minutes) << " minutes, "
                   << "Speakers detected: " << meeting_session.total_speakers << std::endl;
 
         bool success = process_meeting_transcription(
@@ -2059,7 +2121,7 @@ int main(int argc, char ** argv) {
                 raw_file << "## Raw Transcription\n\n";
                 raw_file << meeting_session.get_transcription();
                 raw_file.close();
-                std::cout << "Transcription saved to: " << meeting_output_file << std::endl;
+                std::cerr << "Transcription saved to: " << meeting_output_file << std::endl;
             } else {
                 std::cerr << "Failed to save transcription to file" << std::endl;
             }

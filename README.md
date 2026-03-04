@@ -498,6 +498,47 @@ All Whisper-supported languages work with the multi-language features:
 - **English/Original modes**: Standard processing time (single inference pass)
 - **Model recommendations**: `medium`, `large-v3`, or `large-v3-turbo` for best translation quality
 
+## Pipe-Friendly Output
+
+When stdout is redirected to a file or pipe (not a TTY), recognize automatically switches to a clean output mode:
+
+- **No ANSI escape codes** — no color codes or line-clearing sequences
+- **No duplicate streaming text** — uses dual-buffer strategy to output only finalized text
+- **Info messages go to stderr** — model loading, auto-copy status, meeting processing messages all go to stderr
+- **Clean text on exit** — accumulated transcription is dumped to stdout when the process exits
+
+This makes recognize ideal for scripting and integration with other tools:
+
+```bash
+# Capture clean transcription to a file
+recognize --no-export --no-timestamps > transcript.txt 2>/dev/null &
+PID=$!
+# ... later ...
+kill -INT $PID
+# transcript.txt contains only clean transcription text
+
+# Pipe to another program
+recognize --no-export --no-timestamps 2>/dev/null | my-processor
+```
+
+The `-f, --file` flag also writes transcription text to a file (in addition to stdout output).
+
+## Claude Code Integration
+
+recognize can be used as a voice-to-text input method for [Claude Code](https://claude.ai/code) via custom commands:
+
+1. **`/recognize`** — starts background recording, capturing audio to a session file
+2. **`/recognize-stop`** — stops recording, copies transcript to clipboard, refines grammar, and injects the text as a user message
+
+**Setup:** Place command files in `~/.claude/commands/`:
+- `recognize.md` — starts the background process with `nohup recognize --no-export --no-timestamps > ~/.recognize/claude-session.txt 2>/dev/null &`
+- `recognize-stop.md` — sends SIGINT, reads transcript, copies to clipboard via `pbcopy`, cleans up session files
+
+**How it works:**
+- Background process uses pipe-friendly output mode (clean text, no ANSI codes)
+- SIGINT triggers graceful shutdown; `isatty()` check skips interactive confirmation when no TTY
+- Transcript is refined (grammar, filler words) and treated as user input by Claude
+
 ## Performance Tips
 
 1. **Use CoreML**: Enabled by default for best performance on Apple Silicon

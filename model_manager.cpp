@@ -615,7 +615,7 @@ std::string ModelManager::resolve_model(const std::string& model_arg, bool use_c
     
     // Check if model exists locally
     if (model_exists(model_name)) {
-        std::cout << "✅ Using cached model: " << model_name << "\n";
+        std::cerr << "✅ Using cached model: " << model_name << "\n";
         
         // Also check/download CoreML model if requested and not exists
         #ifdef __APPLE__
