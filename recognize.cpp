@@ -331,6 +331,10 @@ std::string filter_hallucinations(const std::string& text) {
         "(gentle music)",
         "(soft music)",
         "[silence]",
+        "[ Silence ]",
+        "[Silence]",
+        "( Silence )",
+        "(Silence)",
         "[Music]",
         "(music)",
         "you",  // common single-word hallucination on silence - only remove if it's the entire text
