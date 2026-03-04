@@ -534,10 +534,13 @@ The `-f, --file` flag also writes transcription text to a file (in addition to s
 
 recognize can be used as a voice-to-text input method for [Claude Code](https://claude.ai/code) via custom commands:
 
-1. **`/recognize`** — starts background recording with 5s silence auto-stop (exits automatically when you stop speaking)
-2. **`/recognize c`** — continuous recording mode (no auto-stop, manual `/recognize-stop` required)
-3. **`/recognize m`** — meeting mode with large-v3-turbo model and AI summarization
-4. **`/recognize-stop`** — stops recording, copies transcript to clipboard, refines grammar, and injects the text as a user message
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/recognize` | `/r` | Start recording with 5s silence auto-stop |
+| `/recognize c` | `/r c` | Continuous recording (no auto-stop) |
+| `/recognize m` | `/r m` | Meeting mode (large-v3-turbo + AI summary) |
+| `/recognize-stop` | `/rs` | Stop recording, refine transcript, send as input |
+| `/recognize-stop c` | `/rs c` | Stop recording, copy refined transcript to clipboard only |
 
 **Setup:** Place command files in `~/.claude/commands/`:
 - `recognize.md` — starts the background process with `nohup recognize --no-export --no-timestamps > ~/.recognize/claude-session.txt 2>/dev/null &`
