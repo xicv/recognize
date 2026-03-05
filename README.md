@@ -1,787 +1,353 @@
 # recognize
 
-A macOS CLI for real-time speech recognition with CoreML acceleration, based on whisper.cpp's stream example.
+Talk to your Mac and it listens. A fast, local speech recognition CLI for macOS, powered by [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with CoreML and Metal acceleration on Apple Silicon.
 
-## License
+No cloud. No API keys. No latency. Just speak.
 
-MIT License - see [LICENSE](LICENSE) file for details.
+## Voice Mode for Claude Code
 
-## Features
+The flagship feature: **talk to Claude Code instead of typing**. Say `/r` in Claude Code, speak your request, and the transcript becomes Claude's input automatically.
 
-- **Real-time speech transcription** from microphone with low latency
-- **CoreML acceleration** for optimal performance on Apple Silicon Macs
-- **Metal GPU backend** support for enhanced processing
-- **Voice Activity Detection (VAD)** for efficient real-time processing
-- **Comprehensive model management** with automatic downloads and storage optimization
-- **Multi-format export system** supporting TXT, Markdown, JSON, CSV, SRT, VTT, XML
-- **Auto-copy functionality** with automatic clipboard integration
-- **Multi-language speech transcription** with bilingual output support (original + English translation)
-- **Advanced configuration system** with JSON files, environment variables, and CLI options
-- **Professional subtitle generation** in SRT and VTT formats
-- **Session metadata tracking** with detailed performance metrics
-- **AI-powered meeting organization** with Claude CLI integration for structured meeting summaries
-- **Speaker tracking** with automatic `[Speaker N]` labeling across meeting and export outputs
-- **Hallucination filtering** to remove phantom phrases and deduplicate repeated text
-- **Multi-pass summarization** for long meetings (>20k words) with chunk-based processing
-- **Transcription accuracy tuning** with initial prompts, suppress regex, and Silero VAD support
-- **Silence timeout** auto-stops recording after configurable seconds of silence (ideal for voice input workflows)
+```
+You: /r
+> Speak now... (recording)
+> (you speak for a few seconds, then pause)
+> (auto-stops after 5s of silence)
+Claude: I'll help you with that. Let me...
+```
 
-## Requirements
+One command. No manual stop needed. recognize listens, auto-stops when you're done talking, and feeds the transcript straight to Claude.
 
-### CLI Tool
-- macOS 12.0 (Monterey) or later
-- SDL2 library (`brew install sdl2`)
-- CMake (`brew install cmake`)
-- Models are downloaded automatically when needed
+| Command | Alias | What it does |
+|---------|-------|--------------|
+| `/recognize` | `/r` | Speak, auto-stop on silence, Claude responds |
+| `/recognize c` | `/r c` | Continuous recording until you manually stop |
+| `/recognize m` | `/r m` | Meeting mode with AI-powered summary |
+| `/recognize-stop` | `/rs` | Stop a continuous/meeting session |
 
-### Meeting Organization Feature (Optional)
-- Claude CLI (`https://claude.ai/code`) for AI-powered meeting transcription organization
-- Meeting mode works without Claude CLI but provides raw transcription fallback
+**Setup:** Install command files in `~/.claude/commands/` and the launcher at `~/.recognize/claude-launch.sh`. The auto-stop mode uses `--silence-timeout 5` to detect when you've finished speaking, then passes the clean transcript through ASR error correction before sending it to Claude.
 
-## Building
+## What You Can Do
 
-### Quick Start (Recommended)
+### Real-time transcription
+Speak into your mic and see text appear in real-time. Works with 99+ languages.
+
 ```bash
+recognize -m base.en                              # English, good speed/accuracy
+recognize -m medium --output-mode bilingual -l zh  # Chinese with English translation
+recognize -m base.en --step 0 --length 30000       # VAD mode (recommended)
+```
+
+### Meeting transcription with AI summary
+Record a meeting, get structured notes with action items, speaker labels, and decisions - organized by Claude.
+
+```bash
+recognize --meeting                        # Start recording, Ctrl-C when done
+recognize --meeting --name "team-standup"   # Named output file
+recognize --meeting --tinydiarize -m small.en-tdrz  # With speaker tracking
+```
+
+When you stop recording, the transcript is sent to Claude CLI which produces a structured summary with meeting type classification, action items, key decisions, and follow-up drafts. Long meetings (>20k words) use multi-pass summarization. Falls back to raw transcript if Claude CLI isn't available.
+
+### Subtitle generation
+Generate professional subtitles for video content.
+
+```bash
+recognize -m base.en --export --export-format srt   # SRT for video players
+recognize -m base.en --export --export-format vtt   # WebVTT for web
+```
+
+### Scripting and piping
+Clean stdout output with no ANSI codes when piped - ideal for building speech-powered workflows.
+
+```bash
+recognize --no-export --no-timestamps 2>/dev/null | my-processor
+recognize --no-export --no-timestamps > transcript.txt 2>/dev/null &
+```
+
+### Auto-copy to clipboard
+Transcription is automatically copied to your clipboard when a session ends.
+
+```bash
+recognize -m base.en --auto-copy
+```
+
+## Quick Start
+
+```bash
+# Install dependencies and build
 make install-deps && make build
+
+# Interactive first run (guides you through model selection)
+./recognize
+
+# Or pick a model directly
+./recognize -m base.en
+
+# Install system-wide
+make install
 ```
 
-### Alternative Methods
-```bash
-# Using build script
-./build.sh
+**Requirements:** macOS 12.0+, SDL2 (`brew install sdl2`), CMake (`brew install cmake`). Models download automatically on first use.
 
-# Manual build
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DWHISPER_COREML=ON -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
-make -j$(sysctl -n hw.ncpu)
+## Available Models
+
+| Model | Size | Speed | Languages | Best for |
+|-------|------|-------|-----------|----------|
+| `tiny.en` | 39 MB | Fastest | English | Quick drafts, voice commands |
+| `base.en` | 148 MB | Fast | English | Daily use, good accuracy |
+| `small.en` | 488 MB | Medium | English | Higher accuracy |
+| `medium.en` | 1.5 GB | Slower | English | High accuracy |
+| `large-v3` | 3.1 GB | Slowest | 99 languages | Maximum accuracy |
+| `large-v3-turbo` | 1.5 GB | Fast | 99 languages | Best accuracy/speed ratio |
+
+For multilingual or bilingual output, use models without the `.en` suffix (`base`, `medium`, `large-v3`).
+
+```bash
+make list-models       # See all available models
+make list-downloaded   # See what you have installed
 ```
 
-### Available Make Targets
+## Build Commands
+
 ```bash
-make help          # Show all available commands
-
-# Build Commands
-make build         # Full build (configure + compile)
-make rebuild       # Quick rebuild (skip configure)
-make clean         # Remove build artifacts
-make fresh         # Clean + build
-
-# Dependencies
-make check-deps    # Check if dependencies are installed
-make install-deps  # Install dependencies via Homebrew
-
-# Run Commands
-make run           # Interactive model selection
-make run-model MODEL=base.en  # Run with specific model
-make run-vad       # Run VAD mode (recommended)
-make list-models   # Show available models
-
-# Model Management
-make list-downloaded    # Show downloaded models with details
-make show-storage       # Show storage usage summary
-make cleanup-models     # Remove orphaned model files
-
-# Export Examples  
-make run-export-txt     # Transcribe with text export
-make run-export-md      # Transcribe with Markdown export
-make run-export-json    # Transcribe with JSON export
-
-# Configuration
-make config-list       # Show current configuration
-make config-set KEY=value VALUE=value  # Set configuration
-make config-get KEY=key  # Get configuration
-make config-reset       # Reset to defaults
-
-# Installation
-make install            # Install system-wide (/usr/local/bin)
-make install-user       # Install for current user (~/bin)
-make uninstall          # Remove system installation
-make package            # Create distribution package
-
-# Development
-make test               # Test basic functionality
-make stop               # Stop all running dev apps
-
+make build             # Full build (configure + compile)
+make rebuild           # Quick rebuild (skips cmake configure)
+make fresh             # Clean + full build
+make clean             # Remove build artifacts
+make test              # Smoke test (--help check)
+make install           # Install to /usr/local/bin
+make install-user      # Install to ~/bin
 ```
 
+## Configuration
 
-## Usage
+Settings are layered: **CLI args > env vars > project config > user config**.
 
-### Quick Start (Interactive)
 ```bash
-make run
-# The CLI will guide you through model selection and download
+# Set defaults
+recognize config set model base.en
+recognize config set auto_copy_enabled true
+recognize config set silence_timeout 5
+
+# Or use environment variables
+export WHISPER_MODEL=base.en
+export WHISPER_SILENCE_TIMEOUT=5
+
+# View current config
+recognize config list
 ```
 
-### Direct Model Usage
+Config files live at `~/.recognize/config.json` (user) and `.whisper-config.json` (project). See the full [configuration reference](#configuration-reference) below.
+
+## Multi-Language Support
+
+Three output modes for seamless translation:
+
+- **`original`** - Transcribe in the spoken language (default)
+- **`english`** - Translate everything to English
+- **`bilingual`** - Show both original and English side by side
+
 ```bash
-make run-model MODEL=base.en
-# Downloads base.en model automatically if not present
+recognize -m medium --output-mode bilingual -l zh   # Chinese + English
+recognize -m medium --output-mode english -l ja      # Japanese -> English
+recognize -m medium --output-mode original -l es     # Spanish as-is
 ```
 
-### List Available Models
+Bilingual mode runs two inference passes (~2x processing time). Use `medium`, `large-v3`, or `large-v3-turbo` for best translation quality.
+
+## Export Formats
+
+Export transcriptions to TXT, Markdown, JSON, CSV, SRT, VTT, or XML.
+
 ```bash
-make list-models                    # Show all available models for download
-make list-downloaded                # Show downloaded models with details
-make show-storage                   # Show storage usage and cleanup suggestions
-```
-
-### Model Management
-```bash
-# Delete specific model
-recognize --delete-model base.en
-
-# Delete all downloaded models
-recognize --delete-all-models
-
-# Cleanup orphaned files
-recognize --cleanup
-```
-
-### VAD Mode (recommended)
-```bash
-recognize -m base.en --step 0 --length 30000 -vth 0.6
-```
-
-### Continuous Mode
-```bash
-recognize -m base.en --step 500 --length 5000
-```
-
-### With/Without CoreML
-```bash
-recognize -m base.en --coreml     # Enable CoreML (default)
-recognize -m base.en --no-coreml  # Disable CoreML
-```
-
-### Export Transcriptions
-```bash
-# Export to text file (auto-generated filename)
-recognize -m base.en --export --export-format txt
-
-# Export to Markdown with custom filename
-recognize -m base.en --export --export-format md --export-file meeting.md
-
-# Export to JSON with confidence scores
+recognize -m base.en --export --export-format md --export-file notes.md
 recognize -m base.en --export --export-format json --export-include-confidence
-
-# Export to SRT subtitle file
-recognize -m base.en --export --export-format srt
-
-# Export with all metadata and timestamps
-recognize -m base.en --export --export-format json
-
-# Export without metadata (clean output)
-recognize -m base.en --export --export-format txt --export-no-metadata --export-no-timestamps
+recognize -m base.en --export --export-format srt --export-file subtitles.srt
 ```
 
-### Meeting Organization
+Configure default export behavior:
 ```bash
-# Basic meeting transcription with AI organization
-recognize --meeting
-
-# Custom prompt file (advanced usage)
-recognize --meeting --prompt custom_prompt.txt
-
-# Meeting with named output file prefix
-recognize --meeting --name standup
-
-# Meeting with specific model and output language
-recognize --meeting --output-mode english -m base.en
-
-# Meeting with speaker segmentation
-recognize --meeting --tinydiarize -m small.en-tdrz
-
-# Long meeting with custom timeout and multi-pass threshold
-recognize --meeting --meeting-timeout 180 --meeting-max-single-pass 15000
+recognize config set export_enabled true
+recognize config set export_format json
 ```
 
-**Meeting Organization Features:**
-- **Automatic AI Processing**: Raw transcription is processed by Claude CLI when recording ends
-- **Structured Output**: Generates professional meeting summaries with action items, decisions, and metadata
-- **Speaker Tracking**: Automatic `[Speaker 1]`, `[Speaker 2]` labels when speaker turns are detected
-- **Multi-pass Summarization**: Long meetings (>20k words) are split into chunks for per-chunk extraction, then synthesized
-- **Hallucination Filtering**: Removes phantom phrases ("Thank you for watching", URLs, etc.) and deduplicates repeated sentences
-- **Meeting-Optimized Defaults**: Automatically sets `keep_ms=1000`, `step_ms=5000`, `length_ms=15000`, `beam_size=5`, and whisper accuracy parameters
-- **Smart Fallback**: If Claude CLI unavailable, saves raw transcription to same date-based file
-- **Date-Based Naming**: Saves to `[YYYY]-[MM]-[DD].md` or `[name]-[YYYY]-[MM]-[DD].md` with automatic numeric suffix
-- **Configurable Timeout**: Claude CLI invocation timeout (default: 120s) with fallback to raw transcription
-- **Original Content Preserved**: On success, raw transcription is wrapped in HTML comments `<!-- -->` in the output
-- **Integration**: Works with all existing features (export, auto-copy, speaker segmentation)
+## Performance Tips
 
-### Supported Export Formats
-- **TXT**: Plain text with optional timestamps and metadata
-- **Markdown**: Formatted document with tables and styling
-- **JSON**: Structured data with segments, metadata, and confidence scores
-- **CSV**: Spreadsheet-compatible format with segment timing
-- **SRT**: Standard subtitle format for video players
-- **VTT**: WebVTT subtitle format for web players
-- **XML**: Structured markup with complete session details
+1. **CoreML** is enabled by default - best performance on Apple Silicon
+2. **VAD mode** (`--step 0`) is the most efficient for real-time use
+3. **Thread count** auto-tunes: 4 with CoreML (decoder-only), up to 8 without
+4. **`large-v3-turbo`** gets near large-v3 accuracy at ~40% faster speed
+5. **`tiny.en`** for the fastest possible processing when accuracy is less critical
 
-## Command Line Options
+## Speaker Segmentation
+
+Track who's speaking with automatic `[Speaker N]` labels:
+
+```bash
+recognize -m small.en-tdrz --tinydiarize
+recognize -m small.en-tdrz --tinydiarize --step 0 --length 30000  # VAD mode
+```
+
+Currently English-only, requires models with `tdrz` suffix.
+
+---
+
+## Command Line Reference
 
 ### Basic Options
-- `-h, --help` - Show help message
-- `-m, --model` - Model name (e.g., base.en, tiny.en) or file path
-- `-l, --language` - Source language (default: en)
-- `-t, --threads` - Number of threads (default: 4)
-- `--list-models` - List all available models for download
-
-### Model Management Options
-- `--list-downloaded` - Show downloaded models with sizes and paths
-- `--show-storage` - Show detailed storage usage breakdown
-- `--delete-model MODEL` - Delete a specific model
-- `--delete-all-models` - Delete all downloaded models
-- `--cleanup` - Remove orphaned model files
-
-### Export Options
-- `--export` - Enable transcription export when session ends
-- `--export-format FORMAT` - Export format: txt, md, json, csv, srt, vtt, xml
-- `--export-file FILE` - Export to specific file (default: auto-generated)
-- `--export-auto-filename` - Generate automatic filename with timestamp
-- `--export-no-metadata` - Exclude session metadata from export
-- `--export-no-timestamps` - Exclude timestamps from export
-- `--export-include-confidence` - Include confidence scores in export
-
-### Auto-Copy Options
-- `--auto-copy` - Automatically copy transcription to clipboard when session ends
-- `--auto-copy-max-duration N` - Max session duration in hours before skipping auto-copy
-- `--auto-copy-max-size N` - Max transcription size in bytes before skipping auto-copy
-
-### Meeting Organization Options
-- `--meeting` - Enable meeting transcription mode with AI organization
-- `--no-meeting` - Disable meeting mode when enabled via config
-- `--prompt TEXT` - Custom prompt text or file path for meeting organization
-- `--name NAME` - Meeting output filename prefix (produces `[name]-[YYYY]-[MM]-[DD].md`)
-- `--meeting-timeout N` - Timeout for Claude CLI in seconds (default: 120)
-- `--meeting-max-single-pass N` - Max words before multi-pass summarization (default: 20000)
-
-### Accuracy Options
-- `--initial-prompt TEXT` - Initial prompt for whisper conditioning (e.g., vocabulary hints)
-- `--suppress-regex PAT` - Regex pattern to suppress from output
-- `--vad-model PATH|auto` - Silero VAD model path (`auto` downloads automatically)
-- `-fa, --flash-attn` - Flash attention during inference (default: enabled)
-- `--silence-timeout N` - Auto-stop after N seconds of silence (0 = disabled, default: 0). Only triggers after first speech is detected. Excluded from meeting mode.
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-m, --model` | Model name or file path | (interactive) |
+| `-l, --language` | Source language | `en` |
+| `-t, --threads` | Processing threads | 4 |
+| `-h, --help` | Show help | |
 
 ### Audio Options
-- `-c, --capture` - Audio capture device ID (default: -1 for default)
-- `--step` - Audio step size in ms (default: 3000, 0 for VAD mode)
-- `--length` - Audio length in ms (default: 10000)
-- `--keep` - Audio to keep from previous step in ms (default: 200)
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-c, --capture` | Audio capture device ID | -1 (default) |
+| `--step` | Audio step size in ms (0 for VAD) | 3000 |
+| `--length` | Audio length in ms | 10000 |
+| `--keep` | Audio kept from previous step in ms | 200 |
 
 ### Processing Options
-- `-tr, --translate` - Translate to English
-- `-vth, --vad-thold` - VAD threshold (default: 0.6)
-- `-fth, --freq-thold` - High-pass frequency cutoff (default: 100.0)
-- `-bs, --beam-size` - Beam search size (default: -1)
-- `-mt, --max-tokens` - Max tokens per chunk (default: 32)
-
-### CoreML Options
-- `--coreml` - Enable CoreML acceleration (default: enabled)
-- `--no-coreml` - Disable CoreML acceleration
-- `-cm, --coreml-model` - Specific CoreML model path
-
-### Speaker Segmentation Options
-- `-tdrz, --tinydiarize` - Enable speaker segmentation (requires tdrz model)
-- Speaker segmentation detects when different people are speaking and marks speaker turns
-- Requires models with `tdrz` suffix (e.g., `ggml-small.en-tdrz.bin`)
-- Currently supports English-only with small.en models
-- Output includes `[Speaker N]` labels when speakers change
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-tr, --translate` | Translate to English | off |
+| `-vth, --vad-thold` | VAD threshold | 0.6 |
+| `-fth, --freq-thold` | High-pass frequency cutoff | 100.0 |
+| `-bs, --beam-size` | Beam search size | -1 |
+| `-mt, --max-tokens` | Max tokens per chunk | 32 |
+| `-fa, --flash-attn` | Flash attention | on |
 
 ### Output Options
-- `-f, --file` - Output transcription to file
-- `-om, --output-mode` - Output mode: original, english, bilingual (default: original)
-- `-sa, --save-audio` - Save recorded audio to WAV file
-- `--no-timestamps` - Disable timestamp output (auto in continuous mode)
-- `-ps, --print-special` - Print special tokens
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-f, --file` | Output to file | |
+| `-om, --output-mode` | `original`, `english`, or `bilingual` | `original` |
+| `-sa, --save-audio` | Save recorded audio to WAV | off |
+| `--no-timestamps` | Disable timestamps | off |
+| `-ps, --print-special` | Print special tokens | off |
 
-## Configuration Management
+### CoreML Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--coreml` | Enable CoreML acceleration | on |
+| `--no-coreml` | Disable CoreML | |
+| `-cm, --coreml-model` | Specific CoreML model path | |
 
-The CLI supports a comprehensive configuration system with multiple layers:
+### Accuracy Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--initial-prompt` | Whisper conditioning prompt | |
+| `--suppress-regex` | Regex pattern to suppress | |
+| `--vad-model` | Silero VAD model path or `auto` | |
+| `--silence-timeout N` | Auto-stop after N seconds of silence | 0 (off) |
 
-### Configuration Sources (in priority order)
-1. **Command-line arguments** (highest priority)
-2. **Environment variables** 
-3. **Project config file** (`.whisper-config.json` or `config.json`)
-4. **User config file** (`~/.recognize/config.json`)
+### Export Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--export` | Enable export on session end | off |
+| `--export-format` | `txt`, `md`, `json`, `csv`, `srt`, `vtt`, `xml` | `txt` |
+| `--export-file` | Output file path | auto |
+| `--export-no-metadata` | Exclude metadata | off |
+| `--export-no-timestamps` | Exclude timestamps | off |
+| `--export-include-confidence` | Include confidence scores | off |
+
+### Auto-Copy Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--auto-copy` | Copy transcript to clipboard on exit | off |
+| `--auto-copy-max-duration N` | Max session hours before skip | 2 |
+| `--auto-copy-max-size N` | Max transcript bytes before skip | 1MB |
+
+### Meeting Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--meeting` | Enable meeting mode with AI summary | off |
+| `--no-meeting` | Disable meeting mode | |
+| `--prompt` | Custom prompt text or file | |
+| `--name` | Output filename prefix | |
+| `--meeting-timeout N` | Claude CLI timeout in seconds | 120 |
+| `--meeting-max-single-pass N` | Words before multi-pass | 20000 |
+
+### Speaker Segmentation Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-tdrz, --tinydiarize` | Enable speaker segmentation | off |
+
+### Model Management
+| Flag | Description |
+|------|-------------|
+| `--list-models` | List available models |
+| `--list-downloaded` | Show downloaded models with sizes |
+| `--show-storage` | Storage usage breakdown |
+| `--delete-model MODEL` | Delete a specific model |
+| `--delete-all-models` | Delete all models |
+| `--cleanup` | Remove orphaned files |
+
+## Configuration Reference
 
 ### Config Commands
 ```bash
-# Show current configuration (including system paths)
-recognize config list
-
-# Set configuration values
-recognize config set model base.en
-recognize config set threads 8
-recognize config set use_coreml true
-recognize config set models_dir /custom/path/to/models
-
-# Get configuration values
-recognize config get model
-recognize config get threads
-
-# Remove configuration values
-recognize config unset model
-
-# Reset all configuration to defaults
-recognize config reset
-```
-
-### Makefile Shortcuts
-```bash
-# Configuration management via Makefile
-make config-list
-make config-set KEY=model VALUE=base.en
-make config-get KEY=threads
-make config-reset
+recognize config list                    # Show all settings
+recognize config set model base.en       # Set a value
+recognize config get model               # Get a value
+recognize config unset model             # Remove a value
+recognize config reset                   # Reset to defaults
 ```
 
 ### Environment Variables
-All configuration options can be set via environment variables with the `WHISPER_` prefix:
+
+All settings support `WHISPER_` prefixed env vars:
 
 ```bash
-export WHISPER_MODEL=base.en
-export WHISPER_MODELS_DIR=/custom/path/to/models
-export WHISPER_THREADS=8
-export WHISPER_COREML=true
-export WHISPER_VAD_THRESHOLD=0.7
-export WHISPER_STEP_MS=3000
-export WHISPER_LANGUAGE=en
-export WHISPER_TINYDIARIZE=true
-export WHISPER_AUTO_COPY=true
-export WHISPER_AUTO_COPY_MAX_DURATION=2
-export WHISPER_AUTO_COPY_MAX_SIZE=1048576
-export WHISPER_MEETING=true
-export WHISPER_MEETING_PROMPT="custom prompt"
-export WHISPER_MEETING_NAME=standup
-export WHISPER_MEETING_TIMEOUT=180
-export WHISPER_SILENCE_TIMEOUT=5
+WHISPER_MODEL=base.en
+WHISPER_LANGUAGE=en
+WHISPER_THREADS=8
+WHISPER_COREML=true
+WHISPER_SILENCE_TIMEOUT=5
+WHISPER_AUTO_COPY=true
+WHISPER_MEETING=true
+WHISPER_MEETING_NAME=standup
 ```
 
-### Configuration File Format
-Configuration files use JSON format:
+### Config File (`~/.recognize/config.json`)
 
 ```json
 {
   "default_model": "base.en",
-  "models_directory": "/custom/path/to/models",
   "threads": 8,
   "use_coreml": true,
+  "language": "en",
   "vad_threshold": 0.6,
   "step_ms": 3000,
   "length_ms": 10000,
-  "language": "en",
-  "translate": false,
-  "save_audio": false,
-  "tinydiarize": false,
   "auto_copy_enabled": true,
-  "auto_copy_max_duration_hours": 2,
-  "auto_copy_max_size_bytes": 1048576,
+  "silence_timeout": 0,
   "meeting_mode": false,
   "meeting_timeout": 120,
-  "meeting_max_single_pass": 20000,
-  "silence_timeout": 0
+  "meeting_max_single_pass": 20000
 }
 ```
 
-### Available Configuration Keys
-- `model` / `default_model` - Default model to use
-- `models_dir` / `models_directory` - Directory to store models
-- `coreml` / `use_coreml` - Enable/disable CoreML acceleration
-- `coreml_model` - Specific CoreML model path
-- `capture` / `capture_device` - Audio capture device ID
-- `step` / `step_ms` - Audio step size in milliseconds
-- `length` / `length_ms` - Audio length in milliseconds  
-- `keep` / `keep_ms` - Audio to keep from previous step
-- `vad` / `vad_threshold` - Voice activity detection threshold
-- `freq` / `freq_threshold` - High-pass frequency cutoff
-- `threads` - Number of processing threads
-- `tokens` / `max_tokens` - Maximum tokens per chunk
-- `beam` / `beam_size` - Beam search size
-- `language` / `lang` - Source language
-- `translate` - Translate to English
-- `timestamps` / `no_timestamps` - Disable timestamps
-- `special` / `print_special` - Print special tokens
-- `colors` / `print_colors` - Print colors based on token confidence
-- `save_audio` - Save recorded audio
-- `tinydiarize` / `speaker_segmentation` - Enable speaker segmentation (requires tdrz model)
-- `output` / `output_file` - Output file path
-- `format` / `output_format` - Output format (json, plain, timestamped)
-- `mode` / `output_mode` - Output mode: original, english, bilingual
+## Troubleshooting
 
-### Auto-Copy Configuration
-- `auto_copy` / `auto_copy_enabled` - Enable/disable automatic clipboard copy when session ends
-- `auto_copy_max_duration` / `auto_copy_max_duration_hours` - Maximum session duration (hours) before skipping auto-copy (default: 2)
-- `auto_copy_max_size` / `auto_copy_max_size_bytes` - Maximum transcription size (bytes) before skipping auto-copy (default: 1MB)
+**Build fails:** Ensure SDL2 (`brew install sdl2`) and CMake (`brew install cmake`) are installed. Try `make fresh` for a clean build.
 
-### Export Configuration
-- `export_enabled` - Enable/disable automatic export when session ends (default: false)
-- `export_format` - Default export format: txt, md, json, csv, srt, vtt, xml (default: txt)
-- `export_auto_filename` - Generate automatic filename with timestamp (default: true)
-- `export_include_metadata` - Include session metadata in exports (default: true)
-- `export_include_timestamps` - Include timestamps in exports (default: true)
-- `export_include_confidence` - Include confidence scores in exports (default: false)
+**No audio:** Check microphone permissions in System Settings > Privacy & Security > Microphone. Try `-c` to select a different audio device.
 
-### Meeting Organization Configuration
-- `meeting` / `meeting_mode` - Enable/disable meeting transcription mode (default: false)
-- `meeting_prompt` - Custom prompt text or file path for meeting organization
-- `meeting_name` - Output filename prefix (produces `[name]-[YYYY]-[MM]-[DD].md`)
-- `meeting_initial_prompt` - Initial whisper prompt used during meeting mode transcription
-- `meeting_timeout` - Timeout for Claude CLI in seconds (default: 120)
-- `meeting_max_single_pass` - Max words before multi-pass summarization (default: 20000)
+**Poor accuracy:** Use a larger model (`base.en` -> `small.en`), try VAD mode (`--step 0`), or adjust VAD threshold (`-vth`).
 
-### Silence Timeout Configuration
-- `silence_timeout` - Auto-stop after N seconds of silence (default: 0 = disabled). Only activates after first speech is detected. Automatically excluded in meeting mode.
-
-## Multi-Language Speech Transcription
-
-The CLI supports multi-language speech transcription with three output modes for seamless translation workflows:
-
-### Output Modes
-
-- **`original`** - Transcribe in the original spoken language only (default)
-- **`english`** - Translate everything to English only
-- **`bilingual`** - Show both original language and English translation side by side
-
-### Usage Examples
-
-```bash
-# Bilingual Chinese-English transcription
-recognize -m medium --output-mode bilingual -l zh
-
-# Japanese to English translation only
-recognize -m medium --output-mode english -l ja
-
-# Spanish transcription in original language
-recognize -m medium --output-mode original -l es
-
-# Set bilingual as default
-recognize config set output_mode bilingual
-recognize config set language zh
-recognize -m medium  # Uses configured defaults
-```
-
-### Output Format Examples
-
-**Bilingual Mode (with timestamps):**
-```
-[00:01.000 --> 00:02.500]  zh: 你好世界
-[00:01.000 --> 00:02.500]  en: Hello World
-[00:02.500 --> 00:04.000]  zh: 这是一个测试
-[00:02.500 --> 00:04.000]  en: This is a test
-```
-
-**Bilingual Mode (plain text):**
-```
-zh: 你好世界
-en: Hello World
-zh: 这是一个测试
-en: This is a test
-```
-
-**English-only Mode:**
-```
-[00:01.000 --> 00:02.500]  en: Hello World
-[00:02.500 --> 00:04.000]  en: This is a test
-```
-
-### Requirements for Multi-Language Features
-
-- **Multilingual models required**: Use models without `.en` suffix (e.g., `base`, `medium`, `large-v3`)
-- **Source language specification**: Use `-l` or `--language` with appropriate language code (e.g., `zh`, `es`, `fr`, `ja`)
-- **Two-pass processing**: Bilingual mode performs both transcription and translation for optimal accuracy
-
-### Supported Languages
-
-All Whisper-supported languages work with the multi-language features:
-- Chinese (`zh`), Japanese (`ja`), Korean (`ko`)
-- Spanish (`es`), French (`fr`), German (`de`), Italian (`it`)
-- Russian (`ru`), Arabic (`ar`), Hindi (`hi`)
-- And 90+ more languages
-
-### Performance Considerations
-
-- **Bilingual mode**: Approximately 2x processing time (runs two inference passes)
-- **English/Original modes**: Standard processing time (single inference pass)
-- **Model recommendations**: `medium`, `large-v3`, or `large-v3-turbo` for best translation quality
-
-## Pipe-Friendly Output
-
-When stdout is redirected to a file or pipe (not a TTY), recognize automatically switches to a clean output mode:
-
-- **No ANSI escape codes** — no color codes or line-clearing sequences
-- **No duplicate streaming text** — uses dual-buffer strategy to output only finalized text
-- **Info messages go to stderr** — model loading, auto-copy status, meeting processing messages all go to stderr
-- **Clean text on exit** — accumulated transcription is dumped to stdout when the process exits
-
-This makes recognize ideal for scripting and integration with other tools:
-
-```bash
-# Capture clean transcription to a file
-recognize --no-export --no-timestamps > transcript.txt 2>/dev/null &
-PID=$!
-# ... later ...
-kill -INT $PID
-# transcript.txt contains only clean transcription text
-
-# Pipe to another program
-recognize --no-export --no-timestamps 2>/dev/null | my-processor
-```
-
-The `-f, --file` flag also writes transcription text to a file (in addition to stdout output).
-
-## Claude Code Integration
-
-recognize can be used as a voice-to-text input method for [Claude Code](https://claude.ai/code) via custom commands:
-
-| Command | Alias | Description |
-|---------|-------|-------------|
-| `/recognize` | `/r` | Start recording with 5s silence auto-stop |
-| `/recognize c` | `/r c` | Continuous recording (no auto-stop) |
-| `/recognize m` | `/r m` | Meeting mode (large-v3-turbo + AI summary) |
-| `/recognize-stop` | `/rs` | Stop recording, refine transcript, send as input |
-| `/recognize-stop c` | `/rs c` | Stop recording, copy refined transcript to clipboard only |
-
-**Setup:** Place command files in `~/.claude/commands/`:
-- `recognize.md` — starts the background process with `nohup recognize --no-export --no-timestamps > ~/.recognize/claude-session.txt 2>/dev/null &`
-- `recognize-stop.md` — sends SIGINT, reads transcript, copies to clipboard via `pbcopy`, cleans up session files
-
-**How it works:**
-- Background process uses pipe-friendly output mode (clean text, no ANSI codes)
-- SIGINT triggers graceful shutdown; `isatty()` check skips interactive confirmation when no TTY
-- Transcript is refined (grammar, filler words) and treated as user input by Claude
-
-## Performance Tips
-
-1. **Use CoreML**: Enabled by default for best performance on Apple Silicon
-2. **VAD Mode**: Use `--step 0` for efficient processing with voice detection
-3. **Model Selection**: 
-   - `base.en` for English-only, good balance of speed/accuracy
-   - `tiny.en` for fastest processing
-   - `small.en` for better accuracy than tiny
-4. **Thread Count**: Automatically tuned (4 threads with CoreML, up to 8 without); override with `-t`
-5. **Large-v3-turbo**: Use `large-v3-turbo` for near large-v3 accuracy at ~40% faster speed
-
-## Examples
-
-### Interactive Setup (Recommended for First Use)
-```bash
-recognize
-# 1. Shows available models
-# 2. Prompts for model selection
-# 3. Downloads automatically with progress
-# 4. Shows usage examples
-```
-
-### Real-time transcription with VAD
-```bash
-recognize -m base.en --step 0 --length 30000
-```
-
-### Continuous transcription every 500ms
-```bash
-recognize -m base.en --step 500 --length 5000
-```
-
-### Save transcription to file
-```bash
-recognize -m base.en -f transcript.txt
-```
-
-### Multi-language transcription with bilingual output
-```bash
-# Chinese with English translation (side by side)
-recognize -m base --output-mode bilingual -l zh
-
-# Spanish to English translation only
-recognize -m base --output-mode english -l es
-
-# Traditional translate flag (compatibility)
-recognize -m base -l es --translate
-```
-
-### Fast processing with tiny model
-```bash
-recognize -m tiny.en --step 500
-```
-
-### Auto-copy transcription results
-```bash
-# Enable auto-copy with default settings (2 hours max, 1MB max)
-recognize -m base.en --auto-copy
-
-# Enable auto-copy with custom limits
-recognize -m base.en --auto-copy --auto-copy-max-duration 1 --auto-copy-max-size 500000
-
-# Configure via environment variables
-export WHISPER_AUTO_COPY=true
-export WHISPER_AUTO_COPY_MAX_DURATION=3
-recognize -m base.en
-
-# Configure via config file
-recognize config set auto_copy_enabled true
-recognize config set auto_copy_max_duration_hours 1
-recognize -m base.en
-```
-
-### Model Management Examples
-```bash
-# List downloaded models with details
-recognize --list-downloaded
-
-# Show storage usage and get cleanup suggestions
-recognize --show-storage
-
-# Delete specific model to free space
-recognize --delete-model medium.en
-
-# Clean up orphaned files
-recognize --cleanup
-
-# Delete all models (nuclear option)
-recognize --delete-all-models
-```
-
-### Speaker Segmentation Examples
-```bash
-# Enable speaker segmentation with tdrz model
-recognize -m small.en-tdrz --tinydiarize
-
-# Speaker segmentation with VAD mode for meetings
-recognize -m small.en-tdrz --tinydiarize --step 0 --length 30000
-
-# Save speaker-segmented transcription to file
-recognize -m small.en-tdrz --tinydiarize -f meeting_transcript.txt
-
-# Configure speaker segmentation as default
-recognize config set tinydiarize true
-recognize config set model small.en-tdrz
-```
-
-### Export Examples
-```bash
-# Export meeting transcript to Markdown
-recognize -m base.en --export --export-format md --export-file meeting_notes.md
-
-# Export with confidence scores for analysis
-recognize -m base.en --export --export-format json --export-include-confidence
-
-# Generate SRT subtitles for video
-recognize -m base.en --export --export-format srt --export-file video_subtitles.srt
-
-# Quick text export with auto-naming
-recognize -m base.en --export --export-format txt
-
-# Clean CSV export for data processing
-recognize -m base.en --export --export-format csv --export-no-metadata
-
-# Configure default export settings
-recognize config set export_enabled true
-recognize config set export_format json
-recognize config set export_include_confidence true
-recognize -m base.en  # Will automatically export to JSON with confidence scores
-```
-
-### Meeting Organization Examples
-```bash
-# Basic meeting transcription with AI-powered organization
-recognize --meeting
-
-# Named meeting with filename prefix
-recognize --meeting --name "team-standup"
-
-# Team standup with English translation and speaker segmentation
-recognize --meeting --output-mode english --tinydiarize -m small.en-tdrz
-
-# Client meeting with high-quality model and bilingual output
-recognize --meeting --output-mode bilingual -m medium -l auto
-
-# Meeting with custom prompt for specialized format
-recognize --meeting --prompt ~/custom-meeting-prompt.txt
-
-# Meeting with accuracy tuning
-recognize --meeting --initial-prompt "Technical discussion about Kubernetes and microservices"
-
-# Long meeting with extended timeout
-recognize --meeting --meeting-timeout 300 --meeting-max-single-pass 30000
-
-# Configure meeting mode as default
-recognize config set meeting_mode true
-recognize config set meeting_timeout 180
-recognize -m base.en  # Will automatically organize meetings
-
-# Disable meeting mode when enabled via config
-recognize --no-meeting
-
-# Combined meeting and export
-recognize --meeting --export --export-format json
-```
-
-**Meeting Organization Workflow:**
-1. **Recording**: Transcribe meeting with optimized audio defaults and hallucination filtering
-2. **Speaker Tracking**: Automatic `[Speaker N]` labels when speaker turns are detected
-3. **Processing**: When recording ends (Ctrl-C), sends transcription to Claude CLI via secure temp file
-4. **Multi-pass**: Long meetings (>20k words) use chunk-based extraction then synthesis
-5. **Organization**: AI structures the transcription into a professional meeting summary with type classification
-6. **Output**: Saves to `[YYYY]-[MM]-[DD].md` (or `[name]-[YYYY]-[MM]-[DD].md`) with structured content
-7. **Fallback**: If Claude CLI unavailable or times out, saves raw transcription to same file
-
-**Meeting Output Includes:**
-- Meeting type auto-classification (standup, planning, retrospective, brainstorm, 1-on-1, all-hands)
-- Executive summary with key outcomes
-- Speaker-attributed discussion topics
-- Action items tracker with owners and deadlines
-- Key decisions log with rationale
-- Follow-up email draft
-- Embedded JSON metadata in HTML comments for machine parsing
-- Original raw transcription in HTML comments `<!-- -->` (when AI processing succeeds)
-
-## Available Models
-
-The CLI automatically downloads models when needed. Available models:
-
-### English-only (Recommended for English speech)
-- `tiny.en` (39 MB) - Fastest processing, lower accuracy
-- `base.en` (148 MB) - Good balance of speed and accuracy
-- `small.en` (488 MB) - Higher accuracy than base
-- `medium.en` (1.5 GB) - Very high accuracy, slower
-- `large` (3.1 GB) - Highest accuracy, slowest
-
-### Multilingual (99 languages)
-- `tiny` (39 MB) - Fastest, 99 languages, lower accuracy
-- `base` (148 MB) - Good balance, 99 languages
-- `small` (488 MB) - Higher accuracy, 99 languages
-- `medium` (1.5 GB) - Very high accuracy, 99 languages
-- `large-v3` (3.1 GB) - Highest accuracy, 99 languages
-- `large-v3-turbo` (1.5 GB) - 99 languages, ~40% faster than large-v3 with comparable accuracy
-
-View all available models:
-```bash
-make list-models
-```
+**CoreML issues:** Runs fine without CoreML (auto-fallback). Force disable with `--no-coreml` if needed.
 
 ## Documentation
 
-- **[TUTORIAL.md](TUTORIAL.md)** - Comprehensive usage guide with examples
-- **[README.md](README.md)** - This file (quick reference)
-- Run `make help` - Show all Makefile commands
+- **[TUTORIAL.md](TUTORIAL.md)** - Comprehensive usage guide
+- `make help` - All Makefile targets
+- `recognize --help` - Full CLI options
 
+## License
 
-## Troubleshooting
-
-### Build Issues
-- Ensure SDL2 is installed: `brew install sdl2`
-- Verify CMake version: `cmake --version`
-- Clean build: `rm -rf build && ./build.sh`
-
-### Runtime Issues
-- Check microphone permissions in System Preferences > Security & Privacy
-- Verify model file exists and is not corrupted
-- Try different audio devices with `-c` flag
-- Adjust VAD threshold with `-vth` if speech detection is poor
-
-### Performance Issues
-- Enable CoreML with `--coreml` (should be default)
-- Use smaller model (tiny.en vs base.en)
-- Adjust thread count with `-t`
-- Try VAD mode with `--step 0`
+MIT License - see [LICENSE](LICENSE) for details.

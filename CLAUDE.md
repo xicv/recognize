@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 macOS CLI application (`recognize`) for real-time speech recognition with CoreML acceleration, built on whisper.cpp. C++17, macOS 12.0+, Apple Silicon optimized.
 
+### Use Cases
+
+1. **Voice input for Claude Code** — `/r` starts recording, auto-stops after silence, transcript becomes Claude's input. No manual stop needed. (`/r c` for continuous, `/r m` for meetings)
+2. **Meeting transcription** — Record meetings with speaker tracking, then AI-summarize into structured notes with action items (`recognize --meeting`)
+3. **Real-time transcription** — Live speech-to-text to console, file, or clipboard with multi-language and bilingual support
+4. **Subtitle generation** — Export to SRT/VTT for video captioning
+5. **Pipe-friendly scripting** — Clean stdout output (no ANSI codes) for integration with other tools
+
 ## Build & Dev Commands
 
 ```bash
@@ -15,6 +23,7 @@ make rebuild               # Quick rebuild (skips cmake configure step)
 make test                  # Smoke test (runs --help check)
 make fresh                 # Clean + full build
 make clean                 # Remove build artifacts
+make install               # Install to /usr/local/bin/recognize
 
 make dev                   # Clean + build + run (full cycle)
 make quick                 # Rebuild + run (fast iteration)
@@ -40,20 +49,21 @@ Audio Input (SDL2)
     → Output: console, clipboard (auto-copy), file export, or meeting summary
 ```
 
-**`recognize.cpp`** (~1900 lines) — Monolithic main file containing:
+**`recognize.cpp`** (~2000 lines) — Monolithic main file containing:
 - CLI argument parsing (`whisper_params_parse`) with bounds-checked argument access
 - Real-time audio capture loop with sliding window / VAD modes
+- Silence timeout: uses `vad_simple()` on raw `pcmf32_new` audio to detect speech vs silence (not inference results). Only triggers after first speech. Sets `is_running = false` for graceful exit.
 - Signal handler with graceful shutdown (Ctrl-C confirmation during recording, `isatty()` skip when no TTY)
 - Pipe-friendly output mode: detects `!isatty(STDOUT_FILENO)` to suppress ANSI codes, route info to stderr, and use dual-buffer (finalized + current) text accumulation for clean output on exit
 - Auto-copy session management (`AutoCopySession` struct)
 - Export session management (`ExportSession` struct)
 - Meeting session management (`MeetingSession` struct) with speaker tracking and multi-pass summarization
-- Hallucination filtering (`filter_hallucinations()`) removes phantom phrases and deduplicates
+- Hallucination filtering (`filter_hallucinations()`) removes phantom phrases (silence markers, typing sounds, "Thank you for watching", URLs, etc.) and deduplicates
 - Output modes: original, english, bilingual (bilingual creates a second whisper context)
 
 **`model_manager.h/cpp`** — Model registry, auto-download, CoreML model extraction, interactive selection. Models stored in `~/.recognize/models/`.
 
-**`config_manager.h/cpp`** — Multi-layer config with priority: CLI args > env vars (`WHISPER_*` prefix) > project config (`.whisper-config.json`) > user config (`~/.recognize/config.json`). Hand-rolled JSON parser (no external JSON library). Supports meeting settings: `meeting_mode`, `meeting_prompt`, `meeting_name`, `meeting_initial_prompt`, `meeting_timeout`, `meeting_max_single_pass`.
+**`config_manager.h/cpp`** — Multi-layer config with priority: CLI args > env vars (`WHISPER_*` prefix) > project config (`.whisper-config.json`) > user config (`~/.recognize/config.json`). Hand-rolled JSON parser (no external JSON library). Supports all settings including `silence_timeout`.
 
 **`export_manager.h/cpp`** — Stateful export: add segments during recording, export on session end. Supports TXT, Markdown, JSON, CSV, SRT, VTT, XML. `TranscriptionSegment` includes `speaker_id` for speaker-labeled exports.
 
@@ -84,8 +94,33 @@ The build copies the binary from `build/recognize` to `./recognize` in the sourc
 - **Meeting-optimized defaults**: When `--meeting` is active, auto-enables `tinydiarize`, sets `keep_ms=1000`, `step_ms=5000`, `length_ms=15000`, `beam_size=5`, `freq_thold=200`, `no_context=false`, `initial_prompt` for meeting transcription, and whisper parameters tuned for accuracy (`suppress_nst`, `no_speech_thold=0.4`, `entropy_thold=2.2`).
 - **VAD model auto-download**: `--vad-model auto` downloads Silero VAD v5.1.2 (~864KB) to `~/.recognize/models/`.
 - **Pipe-friendly output**: When stdout is not a TTY, all informational messages (model loading, auto-copy, export, meeting status) go to stderr. Streaming display uses dual-buffer (finalized + current group) to output only clean finalized text on exit. No ANSI codes in pipe mode.
-- **Claude Code integration**: `/recognize` and `/recognize-stop` commands in `~/.claude/commands/` enable voice-to-text input. Background process with PID file, SIGINT graceful shutdown, `pbcopy` clipboard integration, transcript refinement and injection as user input. `/recognize` uses 5s silence timeout by default; `/recognize c` for continuous mode; `/recognize m` for meeting mode.
-- **Silence timeout**: `--silence-timeout N` auto-stops recording after N seconds of no speech. Only triggers after first speech detected (prevents premature exit during warmup). Uses `is_running = false` for graceful exit. Automatically disabled in meeting mode. Checked in both VAD and non-VAD paths.
+- **Silence timeout**: `--silence-timeout N` auto-stops recording after N seconds of no speech. Uses `vad_simple()` on raw new audio samples (not inference results — the sliding window would always produce text from old audio). Only triggers after first speech detected (prevents premature exit during warmup). Uses `is_running = false` for graceful exit (same path as SDL quit). Automatically disabled in meeting mode. Checked in both VAD and non-VAD paths.
+- **Hallucination filtering**: Removes known phantom phrases (silence markers, typing/keyboard sounds, "Thank you for watching", URLs, CJK equivalents). Case-insensitive matching. Also deduplicates consecutive identical sentences.
+
+### Claude Code Voice Integration
+
+Files in `~/.claude/commands/` and `~/.recognize/`:
+
+| Command | Alias | Mode | Behavior |
+|---------|-------|------|----------|
+| `/recognize` | `/r` | Auto-stop | Single bash call: launch → wait for silence → return transcript → Claude responds |
+| `/recognize c` | `/r c` | Continuous | Background launch, manual `/rs` to stop |
+| `/recognize m` | `/r m` | Meeting | Background launch with large-v3-turbo, manual `/rs` to stop |
+| `/recognize-stop` | `/rs` | — | Stop recording, ASR error correction, respond to transcript |
+
+**Key files:**
+- `~/.claude/commands/recognize.md` — Skill with mode detection, ASR error correction rules
+- `~/.claude/commands/recognize-stop.md` — Stop skill with full ASR correction pipeline
+- `~/.claude/commands/r.md` / `rs.md` — Aliases
+- `~/.recognize/claude-launch.sh` — Launcher: process management, peon-ping mute/unmute, auto-stop wait loop
+- `~/.recognize/claude-session.{pid,txt,log}` — Session files (PID, transcript, stderr log)
+
+**Auto-stop flow** (single `/r` invocation, no `/rs` needed):
+1. Skill shows "Speak now..." prompt
+2. `claude-launch.sh` launches recognize with `--silence-timeout 5`, backgrounds it, verifies liveness
+3. Script polls PID every 0.5s until recognize auto-exits (up to 100s safety net)
+4. Reads transcript from session file, copies to clipboard, cleans up, re-enables peon-ping
+5. Skill applies ASR error correction and treats result as user message
 
 ### CI/CD
 
