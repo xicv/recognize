@@ -44,28 +44,37 @@ This CLI lives at `src/cli/` within a larger monorepo (`recogniz.ing`). The whis
 
 ```
 Audio Input (SDL2)
-    → recognize.cpp (main loop, signal handling, session management)
+    → recognize.cpp (main loop, signal handling, session orchestration)
+    → audio_processor (whisper inference pipeline, bilingual output)
     → whisper.cpp (transcription engine via whisper_full())
     → Output: console, clipboard (auto-copy), file export, or meeting summary
 ```
 
-**`recognize.cpp`** (~2000 lines) — Monolithic main file containing:
-- CLI argument parsing (`whisper_params_parse`) with bounds-checked argument access
-- Real-time audio capture loop with sliding window / VAD modes
-- Silence timeout: uses `vad_simple()` on raw `pcmf32_new` audio to detect speech vs silence (not inference results). Only triggers after first speech. Sets `is_running = false` for graceful exit.
+**`recognize.cpp`** (~1100 lines) — Session orchestrator:
+- `main()` with PTT and standard audio loops
 - Signal handler with graceful shutdown (Ctrl-C confirmation during recording, `isatty()` skip when no TTY)
+- `perform_auto_copy()`, `perform_export()`, `finalize_session()` — session lifecycle
 - Pipe-friendly output mode: detects `!isatty(STDOUT_FILENO)` to suppress ANSI codes, route info to stderr, and use dual-buffer (finalized + current) text accumulation for clean output on exit
-- Auto-copy session management (`AutoCopySession` struct)
-- Export session management (`ExportSession` struct)
-- Meeting session management (`MeetingSession` struct) with speaker tracking and multi-pass summarization
-- Hallucination filtering (`filter_hallucinations()`) removes phantom phrases (silence markers, typing sounds, "Thank you for watching", URLs, etc.) and deduplicates
-- Output modes: original, english, bilingual (bilingual creates a second whisper context)
+- Silence timeout: uses `vad_simple()` on raw `pcmf32_new` audio to detect speech vs silence (not inference results). Only triggers after first speech. Sets `is_running = false` for graceful exit.
+- Global atomics (`g_interrupt_received`, `g_is_recording`)
+
+**`cli_parser.h/cpp`** — CLI argument parsing (`whisper_params_parse`), help text (`whisper_print_usage`), model management commands, history subcommand handler. Depends on `config_manager`, `model_manager`, `history_manager`.
+
+**`audio_processor.h/cpp`** — Whisper inference pipeline and output formatting: `process_audio_segment()`, `normalize_audio()`, `print_bilingual_results()`, `print_colored_tokens()`, `SpeakerTracker`, `BilingualSegment`. Depends on `whisper.h`, `session_types.h`, `meeting_manager.h`, `text_processing.h`.
+
+**`session_types.h`** — `AutoCopySession` and `ExportSession` structs shared between `recognize.cpp` and `audio_processor`.
+
+**`meeting_manager.h/cpp`** — Meeting transcription orchestration: `MeetingSession` struct, `DEFAULT_MEETING_PROMPT`, `process_meeting_transcription()` with single/multi-pass Claude CLI summarization. Depends on `text_processing.h`.
+
+**`text_processing.h/cpp`** — Pure utility functions (no project deps): `trim_whitespace()`, `filter_hallucinations()`, `copy_to_clipboard_macos()`, `refine_transcription()`, `count_words()`, `split_into_chunks()`, Claude CLI helpers.
 
 **`model_manager.h/cpp`** — Model registry, auto-download, CoreML model extraction, interactive selection. Models stored in `~/.recognize/models/`.
 
 **`config_manager.h/cpp`** — Multi-layer config with priority: CLI args > env vars (`WHISPER_*` prefix) > project config (`.whisper-config.json`) > user config (`~/.recognize/config.json`). Hand-rolled JSON parser (no external JSON library). Supports all settings including `silence_timeout`.
 
 **`export_manager.h/cpp`** — Stateful export: add segments during recording, export on session end. Supports TXT, Markdown, JSON, CSV, SRT, VTT, XML. `TranscriptionSegment` includes `speaker_id` for speaker-labeled exports.
+
+**`history_manager.h/cpp`** — SQLite-backed transcription history with FTS5 full-text search (graceful LIKE fallback). Supports list, search, show, clear, count operations. Auto-prunes entries older than 90 days.
 
 **`whisper_params.h`** — Single struct holding all runtime parameters. Every feature flag and setting lives here. Includes `initial_prompt`, `suppress_regex`, `vad_model_path`, `meeting_timeout`, `meeting_max_single_pass`, `silence_timeout`.
 
