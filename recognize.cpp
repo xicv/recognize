@@ -8,6 +8,9 @@
 #include "model_manager.h"
 #include "config_manager.h"
 #include "export_manager.h"
+#include "ptt_manager.h"
+#include "history_manager.h"
+#include "text_processing.h"
 #include "whisper_params.h"
 
 #include <chrono>
@@ -24,9 +27,13 @@
 #include <atomic>
 #include <termios.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
 #include <regex>
+#ifdef __APPLE__
+#include <pthread.h>
+#endif
 
 // Global state for signal handling
 std::atomic<bool> g_interrupt_received(false);
@@ -113,6 +120,32 @@ void signal_handler(int signal) {
     if (signal == SIGINT) {
         g_interrupt_received.store(true);
     }
+}
+
+// Suppress stderr output during initialization (SDL device listing, whisper model info, etc.)
+// Returns saved fd for later restoration, or -1 on failure
+static int suppress_stderr() {
+    fflush(stderr);
+    int saved_fd = dup(STDERR_FILENO);
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
+    }
+    return saved_fd;
+}
+
+static void restore_stderr(int saved_fd) {
+    if (saved_fd >= 0) {
+        fflush(stderr);
+        dup2(saved_fd, STDERR_FILENO);
+        close(saved_fd);
+    }
+}
+
+// Silent log callback for whisper/ggml during initialization
+static void silent_log_callback(enum ggml_log_level /*level*/, const char * /*text*/, void * /*user_data*/) {
+    // Intentionally empty — suppress all init chatter
 }
 
 // Check for interrupt in main loop and handle confirmation dialog safely
@@ -229,45 +262,6 @@ struct MeetingSession {
     }
 };
 
-std::string trim_whitespace(const std::string& str) {
-    size_t start = str.find_first_not_of(" \t\n\r\f\v");
-    if (start == std::string::npos) {
-        return "";
-    }
-    size_t end = str.find_last_not_of(" \t\n\r\f\v");
-    return str.substr(start, end - start + 1);
-}
-
-bool copy_to_clipboard_macos(const std::string& text) {
-    if (text.empty()) {
-        return false;
-    }
-
-    // Use pbcopy on macOS to copy to clipboard
-    FILE* pipe = popen("pbcopy", "w");
-    if (!pipe) {
-        return false;
-    }
-
-    size_t written = fwrite(text.c_str(), 1, text.length(), pipe);
-    int exit_code = pclose(pipe);
-
-    return (written == text.length() && exit_code == 0);
-}
-
-bool is_claude_cli_available() {
-    // Check if claude command is available in PATH
-    FILE* pipe = popen("which claude 2>/dev/null", "r");
-    if (!pipe) {
-        return false;
-    }
-
-    char buffer[256];
-    bool found = (fgets(buffer, sizeof(buffer), pipe) != nullptr);
-    pclose(pipe);
-
-    return found;
-}
 
 std::string generate_meeting_filename(const std::string& meeting_name) {
     // Date-based naming: [YYYY]-[MM]-[DD].md
@@ -276,13 +270,14 @@ std::string generate_meeting_filename(const std::string& meeting_name) {
 
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
-    std::tm* tm_ptr = std::localtime(&time_t);
+    std::tm tm_buf;
+    localtime_r(&time_t, &tm_buf);
 
     std::ostringstream base_name;
     if (!meeting_name.empty()) {
         base_name << meeting_name << "-";
     }
-    base_name << std::put_time(tm_ptr, "%Y-%m-%d");
+    base_name << std::put_time(&tm_buf, "%Y-%m-%d");
     std::string base = base_name.str();
     std::string filename = base + ".md";
 
@@ -299,219 +294,6 @@ std::string generate_meeting_filename(const std::string& meeting_name) {
 std::string generate_fallback_filename() {
     // Alias to generate_meeting_filename for backward compatibility
     return generate_meeting_filename("");
-}
-
-// Filter common whisper hallucination patterns from transcribed text
-std::string filter_hallucinations(const std::string& text) {
-    if (text.empty()) return text;
-
-    std::string filtered = text;
-
-    // Known phantom phrases that whisper hallucinates on silence/noise
-    static const std::vector<std::string> phantom_patterns = {
-        "Thank you for watching",
-        "Thanks for watching",
-        "Subscribe to my channel",
-        "Please subscribe",
-        "Like and subscribe",
-        "Thank you for listening",
-        "Thanks for listening",
-        "Thank you.",
-        "Bye.",
-        "Goodbye.",
-        "Amara.org",
-        "This video is",
-        "In this video",
-        "www.",
-        "http://",
-        "https://",
-        "[BLANK_AUDIO]",
-        "(upbeat music)",
-        "(dramatic music)",
-        "(gentle music)",
-        "(soft music)",
-        "[silence]",
-        "[ Silence ]",
-        "[Silence]",
-        "( Silence )",
-        "(Silence)",
-        "[typing sounds]",
-        "[typing]",
-        "(typing sounds)",
-        "(typing)",
-        "[keyboard sounds]",
-        "[keyboard]",
-        "[clicking]",
-        "[mouse clicking]",
-        "[Music]",
-        "(music)",
-        "you",  // common single-word hallucination on silence - only remove if it's the entire text
-        "\xe5\xbe\xa1\xe8\xa6\x96\xe8\x81\xb4\xe3\x81\x82\xe3\x82\x8a\xe3\x81\x8c\xe3\x81\xa8\xe3\x81\x86\xe3\x81\x94\xe3\x81\x96\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99",  // Japanese: "Thank you for watching"
-        "\xe8\xb0\xa2\xe8\xb0\xa2\xe8\xa7\x82\xe7\x9c\x8b",  // Chinese: "Thanks for watching"
-    };
-
-    // Trim whitespace first
-    std::string trimmed = filtered;
-    size_t start = trimmed.find_first_not_of(" \t\n\r");
-    if (start == std::string::npos) return "";
-    size_t end = trimmed.find_last_not_of(" \t\n\r");
-    trimmed = trimmed.substr(start, end - start + 1);
-
-    // Check if entire text is a single phantom phrase (case-insensitive)
-    std::string lower_trimmed = trimmed;
-    std::transform(lower_trimmed.begin(), lower_trimmed.end(), lower_trimmed.begin(), ::tolower);
-
-    for (const auto& pattern : phantom_patterns) {
-        std::string lower_pattern = pattern;
-        std::transform(lower_pattern.begin(), lower_pattern.end(), lower_pattern.begin(), ::tolower);
-
-        // If entire trimmed text matches a phantom pattern, filter it out
-        if (lower_trimmed == lower_pattern) {
-            return "";
-        }
-
-        // If text starts with a URL pattern, filter it
-        if ((pattern == "www." || pattern == "http://" || pattern == "https://") &&
-            lower_trimmed.find(lower_pattern) == 0) {
-            return "";
-        }
-    }
-
-    // Detect repeated sentences (same sentence 3+ times → remove duplicates)
-    // Split by sentence-ending punctuation
-    std::vector<std::string> sentences;
-    std::string current;
-    for (char c : filtered) {
-        current += c;
-        if (c == '.' || c == '!' || c == '?') {
-            std::string s = current;
-            size_t s_start = s.find_first_not_of(" \t\n\r");
-            if (s_start != std::string::npos) {
-                s = s.substr(s_start);
-            }
-            if (!s.empty()) {
-                sentences.push_back(s);
-            }
-            current.clear();
-        }
-    }
-    if (!current.empty()) {
-        std::string s = current;
-        size_t s_start = s.find_first_not_of(" \t\n\r");
-        if (s_start != std::string::npos) {
-            sentences.push_back(s.substr(s_start));
-        }
-    }
-
-    // Count consecutive repetitions and deduplicate
-    if (sentences.size() >= 3) {
-        std::vector<std::string> deduped;
-        for (size_t idx = 1; idx < sentences.size(); idx++) {
-            if (sentences[idx] != sentences[idx - 1]) {
-                deduped.push_back(sentences[idx - 1]);
-            }
-        }
-        deduped.push_back(sentences.back());
-
-        if (deduped.size() < sentences.size()) {
-            std::string result;
-            for (const auto& s : deduped) {
-                result += s;
-            }
-            return result;
-        }
-    }
-
-    return filtered;
-}
-
-// Count words in a string
-static int count_words(const std::string& text) {
-    int count = 0;
-    bool in_word = false;
-    for (char c : text) {
-        if (std::isspace(c)) {
-            in_word = false;
-        } else if (!in_word) {
-            in_word = true;
-            count++;
-        }
-    }
-    return count;
-}
-
-// Split text into roughly equal chunks by word count, breaking at sentence boundaries
-static std::vector<std::string> split_into_chunks(const std::string& text, int max_words_per_chunk) {
-    std::vector<std::string> chunks;
-    std::istringstream stream(text);
-    std::string current_chunk;
-    int word_count = 0;
-    std::string word;
-
-    while (stream >> word) {
-        if (!current_chunk.empty()) {
-            current_chunk += " ";
-        }
-        current_chunk += word;
-        word_count++;
-
-        // Check if we've hit the limit and we're at a sentence boundary
-        bool at_sentence_end = (!word.empty() && (word.back() == '.' || word.back() == '!' || word.back() == '?'));
-        if (word_count >= max_words_per_chunk && at_sentence_end) {
-            chunks.push_back(current_chunk);
-            current_chunk.clear();
-            word_count = 0;
-        }
-    }
-
-    if (!current_chunk.empty()) {
-        chunks.push_back(current_chunk);
-    }
-
-    return chunks;
-}
-
-// Execute Claude CLI with a prompt string, return output. Uses temp file for safety.
-static std::string invoke_claude_cli(const std::string& prompt_text, int timeout_seconds) {
-    // Use ~/.recognize/tmp/ for temp files (avoid world-readable /tmp)
-    std::string tmp_dir = std::string(getenv("HOME")) + "/.recognize/tmp";
-    std::filesystem::create_directories(tmp_dir);
-    std::string tmp_template = tmp_dir + "/recognize_meeting_XXXXXX";
-    std::vector<char> temp_path(tmp_template.begin(), tmp_template.end());
-    temp_path.push_back('\0');
-    int temp_fd = mkstemp(temp_path.data());
-    if (temp_fd == -1) return "";
-
-    std::string temp_path_str(temp_path.data());
-
-    ssize_t written = write(temp_fd, prompt_text.c_str(), prompt_text.size());
-    close(temp_fd);
-
-    if (written < 0 || static_cast<size_t>(written) != prompt_text.size()) {
-        std::filesystem::remove(temp_path_str);
-        return "";
-    }
-
-    std::ostringstream cmd;
-    cmd << "timeout " << timeout_seconds << " sh -c 'cat \"" << temp_path_str << "\" | claude -p -'";
-
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
-        std::filesystem::remove(temp_path_str);
-        return "";
-    }
-
-    std::ostringstream output;
-    char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output << buffer;
-    }
-
-    int exit_code = pclose(pipe);
-    std::filesystem::remove(temp_path_str);
-
-    if (exit_code != 0) return "";
-    return output.str();
 }
 
 bool process_meeting_transcription(const std::string& transcription, const std::string& prompt,
@@ -535,7 +317,7 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         if (prompt_file.is_open()) {
             effective_prompt = std::string((std::istreambuf_iterator<char>(prompt_file)),
                                             std::istreambuf_iterator<char>());
-            std::cout << "Using custom prompt from file: " << prompt << std::endl;
+            std::cerr << "Using custom prompt from file: " << prompt << std::endl;
         } else {
             std::cerr << "Warning: Could not read prompt file '" << prompt << "', using default prompt" << std::endl;
             effective_prompt = DEFAULT_MEETING_PROMPT;
@@ -567,9 +349,10 @@ bool process_meeting_transcription(const std::string& transcription, const std::
     {
         auto now = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now);
-        std::tm* tm_ptr = std::localtime(&time_t);
+        std::tm tm_buf;
+        localtime_r(&time_t, &tm_buf);
         std::ostringstream date_ss;
-        date_ss << std::put_time(tm_ptr, "%Y-%m-%d");
+        date_ss << std::put_time(&tm_buf, "%Y-%m-%d");
         meeting_date = date_ss.str();
     }
 
@@ -607,15 +390,15 @@ bool process_meeting_transcription(const std::string& transcription, const std::
 
     if (word_count > max_single_pass) {
         // Multi-pass mode for long meetings
-        std::cout << "Long meeting detected (" << word_count << " words). Using multi-pass summarization..." << std::endl;
+        std::cerr << "Long meeting detected (" << word_count << " words). Using multi-pass summarization..." << std::endl;
 
         auto chunks = split_into_chunks(transcription, max_single_pass);
-        std::cout << "Split into " << chunks.size() << " chunks for processing." << std::endl;
+        std::cerr << "Split into " << chunks.size() << " chunks for processing." << std::endl;
 
         // Pass 1: Extract structured data from each chunk
         std::string combined_extracts;
         for (size_t idx = 0; idx < chunks.size(); idx++) {
-            std::cout << "Processing chunk " << (idx + 1) << "/" << chunks.size() << "..." << std::endl;
+            std::cerr << "Processing chunk " << (idx + 1) << "/" << chunks.size() << "..." << std::endl;
 
             std::string chunk_prompt = "Extract the following from this meeting transcript chunk ("
                 + std::to_string(idx + 1) + "/" + std::to_string(chunks.size())
@@ -636,7 +419,7 @@ bool process_meeting_transcription(const std::string& transcription, const std::
         }
 
         // Pass 2: Generate full summary from extracted data
-        std::cout << "Generating final summary from extracted data..." << std::endl;
+        std::cerr << "Generating final summary from extracted data..." << std::endl;
         std::string pass2_prompt = effective_prompt;
         substitute_placeholders(pass2_prompt, combined_extracts);
 
@@ -756,10 +539,23 @@ struct BilingualSegment {
     int speaker_id = -1;
 };
 
+// RMS audio normalization to target dBFS level
+static void normalize_audio(std::vector<float>& pcmf32, float target_dbfs = -20.0f) {
+    if (pcmf32.empty()) return;
+    float sum_sq = 0.0f;
+    for (const float s : pcmf32) sum_sq += s * s;
+    float rms = std::sqrt(sum_sq / pcmf32.size());
+    if (rms < 1e-8f) return;  // silence
+    float target_rms = std::pow(10.0f, target_dbfs / 20.0f);
+    float gain = std::min(target_rms / rms, 10.0f);  // cap at +20dB
+    for (float& s : pcmf32) s = std::max(-1.0f, std::min(1.0f, s * gain));
+}
+
 // Process audio with bilingual output support
-int process_audio_segment(struct whisper_context* ctx, struct whisper_context* ctx_translate, 
+int process_audio_segment(struct whisper_context* ctx, struct whisper_context* ctx_translate,
                          const whisper_params& params, const std::vector<float>& pcmf32,
-                         std::vector<BilingualSegment>& bilingual_results) {
+                         std::vector<BilingualSegment>& bilingual_results,
+                         const std::vector<whisper_token>& prompt_tokens = {}) {
     
     whisper_full_params wparams = whisper_full_default_params(params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
     
@@ -777,20 +573,32 @@ int process_audio_segment(struct whisper_context* ctx, struct whisper_context* c
     wparams.tdrz_enable      = params.tinydiarize;
     wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
 
+    // Pass context tokens from previous iteration
+    wparams.prompt_tokens   = params.no_context ? nullptr : prompt_tokens.data();
+    wparams.prompt_n_tokens = params.no_context ? 0       : prompt_tokens.size();
+
     // Apply accuracy settings
+    wparams.entropy_thold   = params.entropy_thold;
+    wparams.logprob_thold   = params.logprob_thold;
+    wparams.no_speech_thold = params.no_speech_thold;
+    wparams.length_penalty  = params.length_penalty;
+    if (params.best_of > 0) wparams.greedy.best_of = params.best_of;
+    wparams.suppress_nst    = params.suppress_nst;
+
     if (!params.initial_prompt.empty()) {
         wparams.initial_prompt = params.initial_prompt.c_str();
-        if (params.meeting_mode) {
-            wparams.carry_initial_prompt = true;
-        }
+        wparams.carry_initial_prompt = params.carry_initial_prompt;
     }
     if (!params.suppress_regex.empty()) {
         wparams.suppress_regex = params.suppress_regex.c_str();
     }
+
+    // Meeting mode overrides (only when user hasn't explicitly changed defaults)
     if (params.meeting_mode) {
         wparams.suppress_nst = true;
-        wparams.no_speech_thold = 0.4f;  // Research-recommended: more permissive for meetings
-        wparams.entropy_thold = 2.2f;    // Slightly more permissive for natural speech
+        if (params.no_speech_thold == 0.6f) wparams.no_speech_thold = 0.4f;
+        if (params.entropy_thold == 2.4f) wparams.entropy_thold = 2.2f;
+        wparams.carry_initial_prompt = true;
     }
     if (!params.vad_model_path.empty()) {
         wparams.vad = true;
@@ -999,7 +807,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out(seg.original_text);
 
                 // Add to auto-copy buffer
-                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                     auto_copy_session.transcription_buffer << seg.original_text;
                 }
 
@@ -1023,7 +831,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out(seg.english_text);
 
                 // Add to auto-copy buffer
-                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                     auto_copy_session.transcription_buffer << seg.english_text;
                 }
 
@@ -1052,7 +860,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out("en: " + seg.english_text + "\n");
                 
                 // Add to auto-copy buffer (bilingual format)
-                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                     auto_copy_session.transcription_buffer << lang_code << ": " << seg.original_text << "\n";
                     auto_copy_session.transcription_buffer << "en: " << seg.english_text << "\n";
                 }
@@ -1088,7 +896,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out("\n");
 
                 // Add to auto-copy buffer
-                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                     auto_copy_session.transcription_buffer << timestamp_prefix << seg.original_text;
                     if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
                     auto_copy_session.transcription_buffer << "\n";
@@ -1118,7 +926,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out("\n");
 
                 // Add to auto-copy buffer
-                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                     auto_copy_session.transcription_buffer << timestamp_prefix << seg.english_text;
                     if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
                     auto_copy_session.transcription_buffer << "\n";
@@ -1153,7 +961,7 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out("\n");
 
                 // Add to auto-copy buffer
-                if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                     auto_copy_session.transcription_buffer << timestamp_prefix << lang_code << ": " << seg.original_text << "\n";
                     auto_copy_session.transcription_buffer << timestamp_prefix << "en: " << seg.english_text;
                     if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
@@ -1203,12 +1011,12 @@ void perform_export(ExportSession& session, const whisper_params& params) {
     }
     
     if (!format_valid) {
-        printf("Export failed: unsupported format '%s'. Supported formats: ", params.export_format.c_str());
+        fprintf(stderr, "Export failed: unsupported format '%s'. Supported formats: ", params.export_format.c_str());
         for (size_t i = 0; i < supported_formats.size(); ++i) {
-            printf("%s", supported_formats[i].c_str());
-            if (i < supported_formats.size() - 1) printf(", ");
+            fprintf(stderr, "%s", supported_formats[i].c_str());
+            if (i < supported_formats.size() - 1) fprintf(stderr, ", ");
         }
-        printf("\n");
+        fprintf(stderr, "\n");
         return;
     }
     
@@ -1248,9 +1056,9 @@ void perform_export(ExportSession& session, const whisper_params& params) {
     
     // Perform export
     if (export_manager.export_transcription()) {
-        printf("Export completed successfully.\n");
+        fprintf(stderr, "Export completed successfully.\n");
     } else {
-        printf("Export failed.\n");
+        fprintf(stderr, "Export failed.\n");
     }
 }
 
@@ -1331,10 +1139,25 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         // Accuracy options
         else if (arg == "--initial-prompt")                   { if (!require_arg(i, arg)) return false; params.initial_prompt = argv[++i]; }
         else if (arg == "--suppress-regex")                   { if (!require_arg(i, arg)) return false; params.suppress_regex = argv[++i]; }
+        else if (arg == "--entropy-thold")                    { if (!require_arg(i, arg)) return false; params.entropy_thold = std::stof(argv[++i]); }
+        else if (arg == "--logprob-thold")                    { if (!require_arg(i, arg)) return false; params.logprob_thold = std::stof(argv[++i]); }
+        else if (arg == "--no-speech-thold")                  { if (!require_arg(i, arg)) return false; params.no_speech_thold = std::stof(argv[++i]); }
+        else if (arg == "--length-penalty")                   { if (!require_arg(i, arg)) return false; params.length_penalty = std::stof(argv[++i]); }
+        else if (arg == "--best-of")                          { if (!require_arg(i, arg)) return false; params.best_of = std::stoi(argv[++i]); }
+        else if (arg == "--suppress-nst")                     { params.suppress_nst = true; }
+        else if (arg == "--carry-prompt")                     { params.carry_initial_prompt = true; }
+        else if (arg == "--no-normalize")                     { params.normalize_audio = false; }
         // VAD model
         else if (arg == "--vad-model")                        { if (!require_arg(i, arg)) return false; params.vad_model_path = argv[++i]; }
         // Silence timeout
         else if (arg == "--silence-timeout")                  { if (!require_arg(i, arg)) return false; params.silence_timeout = std::stof(argv[++i]); }
+        // Push-to-talk options
+        else if (arg == "--ptt")                              { params.ptt_mode = true; }
+        else if (arg == "--ptt-key")                          { if (!require_arg(i, arg)) return false; params.ptt_key = argv[++i]; }
+        // Refinement
+        else if (arg == "-r"    || arg == "--refine")         { params.refine = true; }
+        // History
+        else if (arg == "--no-history")                       { params.history_enabled = false; }
         // Config management options
         else if (arg == "config") {
             if (i + 1 < argc) {
@@ -1387,7 +1210,8 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
                 }
             } else {
                 std::cerr << "Config command requires a subcommand" << std::endl;
-                return 1;
+                std::cerr << "Available commands: list, set <key> <value>, get <key>, unset <key>, reset" << std::endl;
+                exit(1);
             }
         }
         else if (arg == "--no-timestamps")                   { params.no_timestamps = true; }
@@ -1463,8 +1287,24 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "accuracy options:\n");
     fprintf(stderr, "            --initial-prompt TEXT [%-7s] initial prompt for conditioning\n", params.initial_prompt.empty() ? "none" : "set");
     fprintf(stderr, "            --suppress-regex PAT  [%-7s] regex pattern to suppress from output\n", params.suppress_regex.empty() ? "none" : "set");
+    fprintf(stderr, "            --entropy-thold N     [%-7.1f] entropy threshold for decoder fallback\n", params.entropy_thold);
+    fprintf(stderr, "            --logprob-thold N     [%-7.1f] avg log probability threshold for fallback (-1.0 = disabled)\n", params.logprob_thold);
+    fprintf(stderr, "            --no-speech-thold N   [%-7.1f] no-speech probability threshold\n", params.no_speech_thold);
+    fprintf(stderr, "            --length-penalty N    [%-7.1f] length penalty for beam search scoring (-1.0 = disabled)\n", params.length_penalty);
+    fprintf(stderr, "            --best-of N           [%-7d] number of best candidates for greedy decoding (-1 = default)\n", params.best_of);
+    fprintf(stderr, "            --suppress-nst        [%-7s] suppress non-speech tokens\n", params.suppress_nst ? "true" : "false");
+    fprintf(stderr, "            --carry-prompt        [%-7s] keep initial prompt across all decode windows\n", params.carry_initial_prompt ? "true" : "false");
+    fprintf(stderr, "            --no-normalize        [%-7s] disable audio normalization\n", params.normalize_audio ? "false" : "true");
     fprintf(stderr, "            --vad-model PATH      [%-7s] Silero VAD model path for speech detection\n", params.vad_model_path.empty() ? "none" : "set");
     fprintf(stderr, "            --silence-timeout N   [%-7.1f] auto-stop after N seconds of silence (0 = disabled)\n", params.silence_timeout);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "push-to-talk:\n");
+    fprintf(stderr, "            --ptt              [%-7s] enable push-to-talk mode (hold key to record)\n", params.ptt_mode ? "true" : "false");
+    fprintf(stderr, "            --ptt-key KEY      [%-7s] PTT key: space, right_option, right_ctrl, fn, f13\n", params.ptt_key.c_str());
+    fprintf(stderr, "\n");
+    fprintf(stderr, "refinement:\n");
+    fprintf(stderr, "  -r,       --refine           [%-7s] refine transcript via Claude CLI (ASR error correction)\n", params.refine ? "true" : "false");
+    fprintf(stderr, "  --no-history                  [%-7s] do not save transcript to history\n", "false");
     fprintf(stderr, "\n");
     fprintf(stderr, "model management:\n");
     fprintf(stderr, "            --list-models      list available models for download\n");
@@ -1502,9 +1342,280 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  %s --meeting                         # organize meeting transcription (saves to [YYYY]-[MM]-[DD].md)\n", argv[0]);
     fprintf(stderr, "  %s --meeting --prompt custom.txt      # use custom prompt file\n", argv[0]);
     fprintf(stderr, "\n");
+    fprintf(stderr, "subcommands:\n");
+    fprintf(stderr, "  config [list|set|get|unset|reset]        manage configuration\n");
+    fprintf(stderr, "  history [list|search|show|clear|count]   transcription history\n");
+    fprintf(stderr, "\n");
+}
+
+// Handle model management commands that exit early (list, delete, cleanup, etc.)
+// Returns: -1 if no command matched (continue to main flow), 0+ for exit code
+static int handle_model_commands(const whisper_params& params, ModelManager& model_manager) {
+    if (params.list_models) {
+        model_manager.list_available_models();
+        return 0;
+    }
+    if (params.list_downloaded) {
+        model_manager.list_downloaded_models();
+        return 0;
+    }
+    if (params.show_storage) {
+        model_manager.show_storage_usage();
+        return 0;
+    }
+    if (params.delete_model_flag) {
+        return model_manager.delete_model(params.model_to_delete, true) ? 0 : 1;
+    }
+    if (params.delete_all_models_flag) {
+        return model_manager.delete_all_models(true) ? 0 : 1;
+    }
+    if (params.cleanup_models) {
+        model_manager.cleanup_orphaned_files();
+        return 0;
+    }
+    return -1; // No command matched
+}
+
+// Finalize session: auto-copy, export, and meeting processing
+static void finalize_session(const whisper_params& params,
+                             AutoCopySession& auto_copy_session,
+                             ExportSession& export_session,
+                             SpeakerTracker& speaker_tracker,
+                             MeetingSession& meeting_session,
+                             const std::string& meeting_output_file,
+                             const std::string& transcript_text,
+                             std::chrono::high_resolution_clock::time_point session_start) {
+    if (params.auto_copy_enabled) {
+        perform_auto_copy(auto_copy_session, params);
+    }
+
+    if (params.export_enabled) {
+        export_session.metadata.total_speakers = speaker_tracker.total_speakers;
+        perform_export(export_session, params);
+    }
+
+    if (params.meeting_mode) {
+        meeting_session.total_speakers = std::max(meeting_session.total_speakers, speaker_tracker.total_speakers);
+        double duration_minutes = meeting_session.get_duration_minutes();
+        std::cerr << "\nProcessing meeting transcription with Claude CLI..." << std::endl;
+        std::cerr << "Duration: " << static_cast<int>(duration_minutes) << " minutes, "
+                  << "Speakers detected: " << meeting_session.total_speakers << std::endl;
+
+        bool success = process_meeting_transcription(
+            meeting_session.get_transcription(),
+            params.meeting_prompt,
+            meeting_output_file,
+            params.meeting_timeout,
+            duration_minutes,
+            params.meeting_max_single_pass
+        );
+
+        if (!success) {
+            std::ofstream raw_file(meeting_output_file);
+            if (raw_file.is_open()) {
+                auto now = std::chrono::system_clock::now();
+                auto time_t = std::chrono::system_clock::to_time_t(now);
+                std::tm tm_buf;
+                localtime_r(&time_t, &tm_buf);
+
+                raw_file << "# Meeting Transcription\n\n";
+                raw_file << "**Date**: " << std::put_time(&tm_buf, "%Y-%m-%d %H:%M") << "\n";
+                raw_file << "**Duration**: " << static_cast<int>(duration_minutes) << " minutes\n";
+                raw_file << "**Speakers**: " << meeting_session.total_speakers << "\n";
+                raw_file << "**Session ID**: " << meeting_session.session_id << "\n\n";
+                raw_file << "---\n\n";
+                raw_file << "## Raw Transcription\n\n";
+                raw_file << meeting_session.get_transcription();
+                raw_file.close();
+                std::cerr << "Transcription saved to: " << meeting_output_file << std::endl;
+            } else {
+                std::cerr << "Failed to save transcription to file" << std::endl;
+            }
+        }
+    }
+
+    // Save to history
+    if (params.history_enabled && !transcript_text.empty()) {
+        HistoryManager history;
+        if (history.open()) {
+            auto now = std::chrono::high_resolution_clock::now();
+            double duration_s = std::chrono::duration<double>(now - session_start).count();
+            std::string mode = params.ptt_mode ? "ptt" :
+                               params.meeting_mode ? "meeting" :
+                               (params.silence_timeout > 0) ? "auto-stop" : "continuous";
+            history.save(transcript_text, duration_s, params.model, mode);
+        }
+    }
+}
+
+static int handle_history_command(int argc, char** argv) {
+    std::string subcmd = (argc >= 1) ? argv[0] : "list";
+    bool json_output = false;
+    int limit = 20;
+    int offset = 0;
+
+    // Safe integer parsing — returns default_val on invalid input
+    auto safe_stoi = [](const char* s, int default_val = 0) -> int {
+        try { return std::stoi(s); } catch (const std::exception&) { return default_val; }
+    };
+    auto safe_stoll = [](const char* s, int64_t default_val = 0) -> int64_t {
+        try { return std::stoll(s); } catch (const std::exception&) { return default_val; }
+    };
+
+    // Auto-detect: JSON output when stdout is not a TTY
+    if (!isatty(STDOUT_FILENO)) json_output = true;
+
+    // Parse common flags
+    for (int i = 0; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--json") json_output = true;
+    }
+
+    HistoryManager history;
+    if (!history.open()) {
+        std::cerr << "error: failed to open history database\n";
+        return 1;
+    }
+
+    if (subcmd == "list" || subcmd == "--json" || subcmd == "--limit" || subcmd == "--offset") {
+        // "recognize history" with just flags defaults to list
+        for (int i = 0; i < argc; i++) {
+            std::string arg = argv[i];
+            if (arg == "--limit" && i + 1 < argc) limit = safe_stoi(argv[++i], 20);
+            else if (arg == "--offset" && i + 1 < argc) offset = safe_stoi(argv[++i], 0);
+        }
+        auto entries = history.list(limit, offset);
+        std::cout << (json_output ? HistoryManager::format_json(entries) : HistoryManager::format_table(entries));
+        return 0;
+    }
+
+    if (subcmd == "search") {
+        std::string query;
+        std::string since;
+        for (int i = 1; i < argc; i++) {
+            std::string arg = argv[i];
+            if (arg == "--json") { json_output = true; continue; }
+            if (arg == "--limit" && i + 1 < argc) { limit = safe_stoi(argv[++i], 20); continue; }
+            if (arg == "--since" && i + 1 < argc) {
+                std::string val = argv[++i];
+                if (!val.empty() && val.back() == 'd') {
+                    int days = safe_stoi(val.substr(0, val.size() - 1).c_str(), 0);
+                    time_t now = time(nullptr);
+                    now -= days * 86400;
+                    std::tm tm_buf;
+                    localtime_r(&now, &tm_buf);
+                    char buf[32];
+                    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm_buf);
+                    since = buf;
+                } else {
+                    since = val;
+                }
+                continue;
+            }
+            if (!query.empty()) query += " ";
+            query += arg;
+        }
+        if (query.empty()) {
+            std::cerr << "error: search requires a query\n"
+                      << "usage: recognize history search <query> [--limit N] [--since Nd] [--json]\n";
+            return 1;
+        }
+        auto entries = history.search(query, limit, since);
+        std::cout << (json_output ? HistoryManager::format_json(entries) : HistoryManager::format_table(entries));
+        return 0;
+    }
+
+    if (subcmd == "show") {
+        if (argc < 2) {
+            std::cerr << "error: show requires an ID\n"
+                      << "usage: recognize history show <id> [--json]\n";
+            return 1;
+        }
+        int64_t id = safe_stoll(argv[1], -1);
+        if (id < 0) {
+            std::cerr << "error: invalid ID '" << argv[1] << "'\n";
+            return 1;
+        }
+        auto entry = history.get(id);
+        if (!entry) {
+            std::cerr << "error: transcript #" << id << " not found\n";
+            return 1;
+        }
+        if (json_output) {
+            std::cout << HistoryManager::format_entry_json(*entry) << "\n";
+        } else {
+            std::cout << "Transcript #" << entry->id << "\n"
+                      << "  Time:     " << entry->timestamp << "\n"
+                      << "  Duration: " << std::fixed << std::setprecision(1) << entry->duration_s << "s\n"
+                      << "  Model:    " << entry->model << "\n"
+                      << "  Mode:     " << entry->mode << "\n"
+                      << "  Words:    " << entry->word_count << "\n"
+                      << "  ---\n"
+                      << entry->text << "\n";
+        }
+        return 0;
+    }
+
+    if (subcmd == "clear") {
+        bool do_clear_all = false;
+        int older_than = 0;
+        for (int i = 1; i < argc; i++) {
+            std::string arg = argv[i];
+            if (arg == "--all") do_clear_all = true;
+            else if (arg == "--older-than" && i + 1 < argc) {
+                std::string val = argv[++i];
+                if (!val.empty() && val.back() == 'd') {
+                    older_than = safe_stoi(val.substr(0, val.size() - 1).c_str(), 0);
+                } else {
+                    older_than = safe_stoi(val.c_str(), 0);
+                }
+            }
+        }
+        if (!do_clear_all && older_than <= 0) {
+            std::cerr << "error: specify --all or --older-than Nd\n"
+                      << "usage: recognize history clear [--older-than Nd] [--all]\n";
+            return 1;
+        }
+        int deleted;
+        if (do_clear_all) {
+            if (isatty(STDIN_FILENO)) {
+                std::cerr << "Delete ALL transcription history? (y/N): ";
+                char c = 'n';
+                std::cin >> c;
+                if (c != 'y' && c != 'Y') {
+                    std::cerr << "Cancelled.\n";
+                    return 0;
+                }
+            }
+            deleted = history.clear_all();
+        } else {
+            deleted = history.clear_older_than(older_than);
+        }
+        std::cerr << "Deleted " << deleted << " entries.\n";
+        return 0;
+    }
+
+    if (subcmd == "count") {
+        int total = history.count();
+        if (json_output) {
+            std::cout << "{\"count\":" << total << "}\n";
+        } else {
+            std::cout << total << " transcriptions in history\n";
+        }
+        return 0;
+    }
+
+    std::cerr << "error: unknown history command: " << subcmd << "\n"
+              << "usage: recognize history [list|search|show|clear|count]\n";
+    return 1;
 }
 
 int main(int argc, char ** argv) {
+    // Handle "history" subcommand before any heavy initialization
+    if (argc >= 2 && std::string(argv[1]) == "history") {
+        return handle_history_command(argc - 2, argv + 2);
+    }
+
     ggml_backend_load_all();
 
     // Register signal handler for graceful shutdown
@@ -1526,6 +1637,29 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    // Validate PTT settings
+    if (params.ptt_mode) {
+        int ptt_key_code = PushToTalkManager::key_name_to_code(params.ptt_key);
+        if (ptt_key_code < 0) {
+            fprintf(stderr, "error: unknown PTT key '%s'. Valid keys: space, right_option, right_ctrl, fn, f13\n", params.ptt_key.c_str());
+            return 1;
+        }
+        if (params.meeting_mode) {
+            fprintf(stderr, "error: --ptt is incompatible with --meeting (meetings require continuous recording)\n");
+            return 1;
+        }
+        if (params.silence_timeout > 0.0f) {
+            fprintf(stderr, "note: --silence-timeout ignored in PTT mode (key release stops recording)\n");
+            params.silence_timeout = 0.0f;
+        }
+    }
+
+    // Validate refine: check claude CLI is available early
+    if (params.refine && !is_claude_cli_available()) {
+        fprintf(stderr, "error: --refine requires Claude CLI. Install from: https://claude.ai/code\n");
+        return 1;
+    }
+
     // Initialize model manager
     ModelManager model_manager;
     
@@ -1535,36 +1669,12 @@ int main(int argc, char ** argv) {
         model_manager.set_models_directory(*effective_config.models_directory);
     }
 
-    // Handle special commands
-    if (params.list_models) {
-        model_manager.list_available_models();
-        return 0;
-    }
-    
-    if (params.list_downloaded) {
-        model_manager.list_downloaded_models();
-        return 0;
-    }
-    
-    if (params.show_storage) {
-        model_manager.show_storage_usage();
-        return 0;
-    }
-    
-    if (params.delete_model_flag) {
-        bool success = model_manager.delete_model(params.model_to_delete, true);
-        return success ? 0 : 1;
-    }
-    
-    if (params.delete_all_models_flag) {
-        bool success = model_manager.delete_all_models(true);
-        return success ? 0 : 1;
-    }
-    
-    if (params.cleanup_models) {
-        model_manager.cleanup_orphaned_files();
-        return 0;
-    }
+    // Handle model management commands (exit early if matched)
+    int cmd_result = handle_model_commands(params, model_manager);
+    if (cmd_result >= 0) return cmd_result;
+
+    // Show clean loading state
+    const bool stderr_is_tty = isatty(STDERR_FILENO);
 
     // Resolve model (with auto-download if needed)
     std::string resolved_model = model_manager.resolve_model(params.model, params.use_coreml);
@@ -1575,6 +1685,15 @@ int main(int argc, char ** argv) {
     
     // Update params with resolved model path
     params.model = resolved_model;
+
+    // Extract short model name for display (e.g. "ggml-large-v3-turbo.bin" → "large-v3-turbo")
+    std::string display_model = std::filesystem::path(resolved_model).stem().string();
+    if (display_model.rfind("ggml-", 0) == 0) {
+        display_model = display_model.substr(5);
+    }
+    if (stderr_is_tty) {
+        fprintf(stderr, "[Loading %s...]\n", display_model.c_str());
+    }
     
     // Auto-set CoreML model path if CoreML is enabled and not explicitly set
     if (params.use_coreml && params.coreml_model.empty()) {
@@ -1588,9 +1707,7 @@ int main(int argc, char ** argv) {
                 std::string coreml_path = model_manager.get_coreml_model_path(name);
                 if (model_manager.coreml_model_exists(name)) {
                     params.coreml_model = coreml_path;
-                    std::cerr << "✅ Auto-detected CoreML model: " << coreml_path << "\n";
                 } else {
-                    std::cerr << "⚠️  CoreML enabled but model not available: " << coreml_path << "\n";
                     params.use_coreml = false;  // Disable CoreML to prevent crashes
                 }
                 break;
@@ -1598,13 +1715,23 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // Adjust thread count based on CoreML availability
-    // CoreML handles the encoder on ANE, so fewer CPU threads are needed for the decoder
+    // Adjust thread count based on hardware acceleration
+    // When CoreML + Metal are active, encoder runs on ANE and decoder on GPU,
+    // so very few CPU threads are needed (just orchestration overhead).
     {
         int default_threads = std::min(4, (int32_t)std::thread::hardware_concurrency());
-        if (params.use_coreml && params.n_threads == default_threads) {
-            params.n_threads = 4; // CoreML: 4 is optimal for decoder-only CPU work
-        } else if (!params.use_coreml && params.n_threads <= 4) {
+        if (params.use_coreml && params.use_gpu) {
+            // CoreML encoder on ANE + Metal decoder: minimal CPU threads
+            if (params.n_threads == default_threads) {
+                params.n_threads = std::min(4, (int32_t)std::thread::hardware_concurrency());
+            }
+        } else if (!params.use_coreml && params.use_gpu) {
+            // Metal only: GPU handles most compute
+            if (params.n_threads == default_threads) {
+                params.n_threads = std::min(4, (int32_t)std::thread::hardware_concurrency());
+            }
+        } else if (params.n_threads <= 4) {
+            // CPU only: use more threads
             params.n_threads = std::min(8, (int32_t)std::thread::hardware_concurrency());
         }
     }
@@ -1649,15 +1776,23 @@ int main(int argc, char ** argv) {
     }
     if (use_vad) params.max_tokens = 0;
 
-    // Init audio
+    // Init audio — suppress SDL device listing during init
     audio_async audio(params.length_ms);
-    if (!audio.init(params.capture_id, WHISPER_SAMPLE_RATE)) {
+    int saved_stderr = suppress_stderr();
+    bool audio_ok = audio.init(params.capture_id, WHISPER_SAMPLE_RATE);
+    restore_stderr(saved_stderr);
+    if (!audio_ok) {
         fprintf(stderr, "%s: audio.init() failed!\n", __func__);
         return 1;
     }
 
     audio.resume();
-    
+
+    // Request P-core scheduling for the inference thread
+    #ifdef __APPLE__
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+    #endif
+
     // Set recording state for signal handler
     g_is_recording.store(true);
 
@@ -1673,31 +1808,35 @@ int main(int argc, char ** argv) {
     // Configure CoreML if available and requested
     #ifdef WHISPER_COREML
     if (params.use_coreml) {
-        cparams.use_gpu = false;  // CoreML handles GPU acceleration
-        fprintf(stderr, "%s: CoreML acceleration enabled\n", __func__);
+        cparams.use_gpu = params.use_gpu;  // Metal for decoder, CoreML for encoder
     } else {
         cparams.use_gpu = params.use_gpu;
     }
     #else
     cparams.use_gpu = params.use_gpu;
     if (params.use_coreml) {
-        fprintf(stderr, "%s: WARNING: CoreML requested but not compiled with CoreML support\n", __func__);
+        fprintf(stderr, "warning: CoreML requested but not compiled with CoreML support\n");
     }
     #endif
 
     cparams.flash_attn = params.flash_attn;
 
+    // Suppress whisper/ggml verbose logging during model load
+    whisper_log_set(silent_log_callback, nullptr);
+    ggml_log_set(silent_log_callback, nullptr);
+
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
     if (ctx == nullptr) {
+        // Restore logging before printing error
+        whisper_log_set(nullptr, nullptr);
+        ggml_log_set(nullptr, nullptr);
         fprintf(stderr, "error: failed to initialize whisper context\n");
         return 2;
     }
 
     // CoreML warm-up: first inference triggers ANE compilation (2-5s delay)
-    // Running a dummy inference at startup moves this cost before "Start speaking"
     #ifdef WHISPER_COREML
     if (params.use_coreml) {
-        fprintf(stderr, "%s: warming up CoreML...\n", __func__);
         std::vector<float> warmup(WHISPER_SAMPLE_RATE * 1, 0.0f); // 1 second of silence
         whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
         wp.print_realtime   = false;
@@ -1706,13 +1845,16 @@ int main(int argc, char ** argv) {
         wp.print_special    = false;
         wp.n_threads        = params.n_threads;
         whisper_full(ctx, wp, warmup.data(), warmup.size());
-        fprintf(stderr, "%s: CoreML ready\n", __func__);
     }
     #endif
+
+    // Keep whisper/ggml logging suppressed for clean UX
+    // (Metal kernel JIT compilation can log during first real inference)
 
     // Validate output mode
     if (params.output_mode != "original" && params.output_mode != "english" && params.output_mode != "bilingual") {
         fprintf(stderr, "error: invalid output mode '%s'. Valid modes: original, english, bilingual\n", params.output_mode.c_str());
+        whisper_free(ctx);
         return 1;
     }
     
@@ -1729,6 +1871,7 @@ int main(int argc, char ** argv) {
     bool needs_translation = (params.output_mode == "english" || params.output_mode == "bilingual");
     if (needs_translation && !whisper_is_multilingual(ctx)) {
         fprintf(stderr, "error: output mode '%s' requires a multilingual model, but current model is English-only\n", params.output_mode.c_str());
+        whisper_free(ctx);
         return 1;
     }
     
@@ -1750,46 +1893,12 @@ int main(int argc, char ** argv) {
 
     std::vector<whisper_token> prompt_tokens;
 
-    // Print processing info with CoreML status
-    {
-        fprintf(stderr, "\n");
-        if (!whisper_is_multilingual(ctx)) {
-            if (params.language != "en" || params.translate) {
-                params.language = "en";
-                params.translate = false;
-                fprintf(stderr, "%s: WARNING: model is not multilingual, ignoring language and translation options\n", __func__);
-            }
+    // Auto-correct language settings for non-multilingual models
+    if (!whisper_is_multilingual(ctx)) {
+        if (params.language != "en" || params.translate) {
+            params.language = "en";
+            params.translate = false;
         }
-        
-        #ifdef WHISPER_COREML
-        fprintf(stderr, "%s: CoreML support: %s\n", __func__, params.use_coreml ? "enabled" : "disabled");
-        #else
-        fprintf(stderr, "%s: CoreML support: not compiled\n", __func__);
-        #endif
-        
-        fprintf(stderr, "%s: processing %d samples (step = %.1f sec / len = %.1f sec / keep = %.1f sec), %d threads, lang = %s, task = %s, output_mode = %s, timestamps = %d ...\n",
-                __func__,
-                n_samples_step,
-                float(n_samples_step)/WHISPER_SAMPLE_RATE,
-                float(n_samples_len )/WHISPER_SAMPLE_RATE,
-                float(n_samples_keep)/WHISPER_SAMPLE_RATE,
-                params.n_threads,
-                params.language.c_str(),
-                params.translate ? "translate" : "transcribe",
-                params.output_mode.c_str(),
-                params.no_timestamps ? 0 : 1);
-
-        if (!use_vad) {
-            fprintf(stderr, "%s: n_new_line = %d, no_context = %d\n", __func__, n_new_line, params.no_context);
-        } else {
-            fprintf(stderr, "%s: using VAD, will transcribe on speech activity\n", __func__);
-        }
-
-        if (params.print_colors) {
-            fprintf(stderr, "%s: color scheme: red (low confidence), yellow (medium), green (high confidence)\n", __func__);
-        }
-
-        fprintf(stderr, "\n");
     }
 
     int n_iter = 0;
@@ -1806,6 +1915,8 @@ int main(int argc, char ** argv) {
         fout.open(params.fname_out);
         if (!fout.is_open()) {
             fprintf(stderr, "%s: failed to open output file '%s'!\n", __func__, params.fname_out.c_str());
+            whisper_free(ctx);
+            if (ctx_translate) whisper_free(ctx_translate);
             return 1;
         }
     }
@@ -1814,31 +1925,19 @@ int main(int argc, char ** argv) {
     if (params.save_audio) {
         time_t now = time(0);
         char buffer[80];
-        strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", localtime(&now));
+        std::tm tm_buf;
+        localtime_r(&now, &tm_buf);
+        strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", &tm_buf);
         std::string filename = std::string(buffer) + ".wav";
         wavWriter.open(filename, WHISPER_SAMPLE_RATE, 16, 1);
     }
     
-    fprintf(stderr, "[Start speaking]\n");
-    fflush(stderr);
-
     // Initialize auto-copy session
     AutoCopySession auto_copy_session;
-    if (params.auto_copy_enabled) {
-        fprintf(stderr, "Auto-copy enabled (Session ID: %s, Max Duration: %d hours, Max Size: %d bytes)\n",
-               auto_copy_session.session_id.c_str(),
-               params.auto_copy_max_duration_hours,
-               params.auto_copy_max_size_bytes);
-    }
-    
+
     // Initialize export session
     ExportSession export_session;
     if (params.export_enabled) {
-        fprintf(stderr, "Export enabled (Session ID: %s, Format: %s, File: %s)\n",
-               export_session.session_id.c_str(),
-               params.export_format.c_str(),
-               params.export_auto_filename ? "auto-generated" : params.export_file.c_str());
-
         // Setup session metadata
         export_session.metadata.session_id = export_session.session_id;
         export_session.metadata.start_time = std::chrono::system_clock::now();
@@ -1849,17 +1948,193 @@ int main(int argc, char ** argv) {
         export_session.metadata.vad_threshold = params.vad_thold;
         export_session.metadata.step_ms = params.step_ms;
         export_session.metadata.length_ms = params.length_ms;
-        export_session.metadata.version = "recognize-1.0.0";
+#ifdef RECOGNIZE_VERSION
+        export_session.metadata.version = "recognize-" RECOGNIZE_VERSION;
+#else
+        export_session.metadata.version = "recognize-dev";
+#endif
     }
 
     // Initialize speaker tracker and meeting session
     SpeakerTracker speaker_tracker;
     MeetingSession meeting_session;
+    std::string meeting_output_file;
     if (params.meeting_mode) {
-        std::string output_filename = generate_meeting_filename(params.meeting_name);
-        fprintf(stderr, "Meeting mode enabled (Session ID: %s, Output: %s)\n",
-               meeting_session.session_id.c_str(), output_filename.c_str());
-        fprintf(stderr, "Note: Will save to [YYYY]-[MM]-[DD].md with AI organization (or raw transcription on failure).\n");
+        meeting_output_file = generate_meeting_filename(params.meeting_name);
+    }
+
+    // ─── Push-to-Talk mode ───────────────────────────────────────────────
+    if (params.ptt_mode) {
+        PushToTalkManager ptt;
+        int ptt_key_code = PushToTalkManager::key_name_to_code(params.ptt_key);
+        if (!ptt.start(ptt_key_code)) {
+            fprintf(stderr, "Failed to start PTT. Check Input Monitoring permissions.\n");
+            whisper_free(ctx);
+            if (ctx_translate) whisper_free(ctx_translate);
+            return 7;
+        }
+
+        // Clean ready state for PTT
+        if (stderr_is_tty) {
+            fprintf(stderr, "[Ready — hold %s to record, release to transcribe]\n",
+                    params.ptt_key.c_str());
+        }
+        fflush(stderr);
+
+        bool is_running_ptt = true;
+        std::string ptt_pipe_text;
+        const bool stderr_tty = isatty(STDERR_FILENO);
+
+        // PTT: single-shot — record once, transcribe, exit (no quit confirmation)
+        while (is_running_ptt && !g_interrupt_received.load()) {
+            // Wait for key press
+            while (!ptt.is_key_held() && is_running_ptt && !g_interrupt_received.load()) {
+                is_running_ptt = sdl_poll_events();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (!is_running_ptt || g_interrupt_received.load()) break;
+
+            // Key pressed — start capture
+            audio.clear();
+            auto t_press = std::chrono::high_resolution_clock::now();
+            if (stderr_tty) fprintf(stderr, "\r[Recording...] ");
+
+            // Capture while key is held
+            while (ptt.is_key_held() && is_running_ptt && !g_interrupt_received.load()) {
+                is_running_ptt = sdl_poll_events();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (!is_running_ptt || g_interrupt_received.load()) break;
+
+            // Key released — get audio and transcribe
+            auto t_release = std::chrono::high_resolution_clock::now();
+            int duration_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                t_release - t_press).count());
+
+            if (duration_ms < 200) {
+                // Too short, likely accidental tap — wait for another press
+                if (stderr_tty) fprintf(stderr, "\r[Too short, skipped]          \n");
+                continue;
+            }
+
+            // Cap at 30s (circular buffer limit)
+            duration_ms = std::min(duration_ms, 30000);
+
+            std::vector<float> pcmf32_ptt;
+            audio.get(duration_ms, pcmf32_ptt);
+
+            if (params.normalize_audio) {
+                normalize_audio(pcmf32_ptt);
+            }
+
+            if (stderr_tty) fprintf(stderr, "\r[Transcribing %.1fs...]        ", duration_ms / 1000.0f);
+
+            // Single-pass whisper inference
+            std::vector<BilingualSegment> bilingual_results;
+            if (process_audio_segment(ctx, ctx_translate, params, pcmf32_ptt,
+                                      bilingual_results, prompt_tokens) != 0) {
+                fprintf(stderr, "\nfailed to process audio\n");
+                break;  // Exit on error
+            }
+
+            // Apply hallucination filter
+            for (auto& seg : bilingual_results) {
+                if (!seg.original_text.empty())
+                    seg.original_text = filter_hallucinations(seg.original_text);
+                if (!seg.english_text.empty())
+                    seg.english_text = filter_hallucinations(seg.english_text);
+            }
+            bilingual_results.erase(
+                std::remove_if(bilingual_results.begin(), bilingual_results.end(),
+                    [](const BilingualSegment& s) {
+                        return s.original_text.empty() && s.english_text.empty();
+                    }),
+                bilingual_results.end());
+
+            // Refine via Claude if enabled
+            if (params.refine && !bilingual_results.empty()) {
+                // Concatenate raw text for refinement
+                std::string raw_text;
+                for (const auto& seg : bilingual_results) {
+                    if (!seg.original_text.empty()) raw_text += seg.original_text;
+                    else if (!seg.english_text.empty()) raw_text += seg.english_text;
+                }
+                if (!raw_text.empty()) {
+                    std::string refined = refine_transcription(raw_text);
+                    // Replace all segments with a single refined segment
+                    BilingualSegment refined_seg = bilingual_results[0];
+                    if (!refined_seg.original_text.empty()) {
+                        refined_seg.original_text = " " + refined;
+                    } else {
+                        refined_seg.english_text = " " + refined;
+                    }
+                    refined_seg.speaker_turn = false;
+                    bilingual_results.clear();
+                    bilingual_results.push_back(refined_seg);
+                }
+            }
+
+            // Display results
+            if (stderr_tty) fprintf(stderr, "\r                              \r");
+
+            if (stdout_is_tty) {
+                printf("\n");
+            }
+
+            std::ostringstream ptt_pipe_buf;
+            std::ostringstream* pbuf = stdout_is_tty ? nullptr : &ptt_pipe_buf;
+            print_bilingual_results(bilingual_results, params, auto_copy_session, export_session,
+                                    speaker_tracker, nullptr, stdout_is_tty, pbuf);
+
+            if (!stdout_is_tty) {
+                ptt_pipe_text += ptt_pipe_buf.str();
+            }
+
+            if (stdout_is_tty) {
+                printf("\n");
+                fflush(stdout);
+            }
+
+            // Single-shot: exit after first successful transcription
+            break;
+        }
+
+        ptt.stop();
+
+        // Dump accumulated text in pipe mode
+        if (!stdout_is_tty && !ptt_pipe_text.empty()) {
+            printf("%s\n", ptt_pipe_text.c_str());
+            fflush(stdout);
+        }
+
+        audio.pause();
+
+        // Gather final transcript text for history
+        std::string history_text;
+        if (params.meeting_mode) {
+            history_text = meeting_session.get_transcription();
+        } else if (!stdout_is_tty) {
+            history_text = ptt_pipe_text;
+        } else {
+            history_text = auto_copy_session.transcription_buffer.str();
+        }
+
+        // Finalize session
+        finalize_session(params, auto_copy_session, export_session, speaker_tracker,
+                         meeting_session, meeting_output_file, history_text, auto_copy_session.start_time);
+
+        g_is_recording.store(false);
+        whisper_free(ctx);
+        if (ctx_translate) whisper_free(ctx_translate);
+        return 0;
+    }
+
+    // ─── Standard (non-PTT) mode ────────────────────────────────────────
+
+    // Clean ready state for standard mode
+    if (stderr_is_tty) {
+        fprintf(stderr, "[Start speaking]\n");
+        fflush(stderr);
     }
 
     auto t_last  = std::chrono::high_resolution_clock::now();
@@ -1906,8 +2181,10 @@ int main(int argc, char ** argv) {
             }
 
             // Silence timeout: check new audio for speech before inference
+            // Use a copy because vad_simple() applies high_pass_filter() in-place
             if (silence_timeout_enabled) {
-                bool new_audio_has_speech = ::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false);
+                std::vector<float> pcmf32_vad(pcmf32_new);
+                bool new_audio_has_speech = ::vad_simple(pcmf32_vad, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false);
                 if (new_audio_has_speech) {
                     has_spoken = true;
                     t_last_speech = std::chrono::high_resolution_clock::now();
@@ -1967,12 +2244,19 @@ int main(int argc, char ** argv) {
             t_last = t_now;
         }
 
+        // Apply audio normalization before inference
+        if (params.normalize_audio) {
+            normalize_audio(pcmf32);
+        }
+
         // Run inference via bilingual processing pipeline
         {
             // Note: whisper_full_params are configured inside process_audio_segment()
             std::vector<BilingualSegment> bilingual_results;
-            if (process_audio_segment(ctx, ctx_translate, params, pcmf32, bilingual_results) != 0) {
+            if (process_audio_segment(ctx, ctx_translate, params, pcmf32, bilingual_results, prompt_tokens) != 0) {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
+                whisper_free(ctx);
+                if (ctx_translate) whisper_free(ctx_translate);
                 return 6;
             }
 
@@ -2048,7 +2332,7 @@ int main(int argc, char ** argv) {
                             meeting_session.add_transcription(std::string(seg_text), speaker_turn);
                             meeting_session.add_transcription(" ");
                         }
-                        if (params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) {
+                        if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
                             auto_copy_session.transcription_buffer << seg_text;
                         }
                         if (params.export_enabled) {
@@ -2120,6 +2404,28 @@ int main(int argc, char ** argv) {
 
     audio.pause();
 
+    // Refine accumulated text via Claude if enabled (standard mode)
+    if (params.refine) {
+        // Refine pipe output
+        std::string raw_pipe = pipe_finalized_text + pipe_current_text.str();
+        if (!raw_pipe.empty()) {
+            std::string refined = refine_transcription(raw_pipe);
+            pipe_finalized_text = refined;
+            pipe_current_text.str("");
+            pipe_current_text.clear();
+        }
+        // Refine auto-copy buffer
+        if (params.auto_copy_enabled) {
+            std::string raw_copy = auto_copy_session.transcription_buffer.str();
+            if (!raw_copy.empty()) {
+                std::string refined_copy = refine_transcription(raw_copy);
+                auto_copy_session.transcription_buffer.str("");
+                auto_copy_session.transcription_buffer.clear();
+                auto_copy_session.transcription_buffer << refined_copy;
+            }
+        }
+    }
+
     // Dump accumulated text to stdout when not a TTY (pipe/redirect mode)
     if (!stdout_is_tty) {
         std::string final_text = pipe_finalized_text + pipe_current_text.str();
@@ -2129,66 +2435,25 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // Perform auto-copy when session ends
-    if (params.auto_copy_enabled) {
-        perform_auto_copy(auto_copy_session, params);
-    }
-    
-    // Perform export when session ends
-    if (params.export_enabled) {
-        export_session.metadata.total_speakers = speaker_tracker.total_speakers;
-        perform_export(export_session, params);
-    }
-
-    // Perform meeting processing when session ends
+    // Gather final transcript text for history
+    std::string history_text;
     if (params.meeting_mode) {
-        std::string meeting_output_file = generate_meeting_filename(params.meeting_name);
-        // Sync speaker count from shared tracker
-        meeting_session.total_speakers = std::max(meeting_session.total_speakers, speaker_tracker.total_speakers);
-        double duration_minutes = meeting_session.get_duration_minutes();
-        std::cerr << "\nProcessing meeting transcription with Claude CLI..." << std::endl;
-        std::cerr << "Duration: " << static_cast<int>(duration_minutes) << " minutes, "
-                  << "Speakers detected: " << meeting_session.total_speakers << std::endl;
-
-        bool success = process_meeting_transcription(
-            meeting_session.get_transcription(),
-            params.meeting_prompt,
-            meeting_output_file,
-            params.meeting_timeout,
-            duration_minutes,
-            params.meeting_max_single_pass
-        );
-
-        if (!success) {
-            // Fallback: save raw transcription to the same date-based filename
-            std::ofstream raw_file(meeting_output_file);
-            if (raw_file.is_open()) {
-                auto now = std::chrono::system_clock::now();
-                auto time_t = std::chrono::system_clock::to_time_t(now);
-                std::tm* tm_ptr = std::localtime(&time_t);
-
-                raw_file << "# Meeting Transcription\n\n";
-                raw_file << "**Date**: " << std::put_time(tm_ptr, "%Y-%m-%d %H:%M") << "\n";
-                raw_file << "**Duration**: " << static_cast<int>(duration_minutes) << " minutes\n";
-                raw_file << "**Speakers**: " << meeting_session.total_speakers << "\n";
-                raw_file << "**Session ID**: " << meeting_session.session_id << "\n\n";
-                raw_file << "---\n\n";
-                raw_file << "## Raw Transcription\n\n";
-                raw_file << meeting_session.get_transcription();
-                raw_file.close();
-                std::cerr << "Transcription saved to: " << meeting_output_file << std::endl;
-            } else {
-                std::cerr << "Failed to save transcription to file" << std::endl;
-            }
-        }
+        history_text = meeting_session.get_transcription();
+    } else if (!stdout_is_tty) {
+        history_text = pipe_finalized_text + pipe_current_text.str();
+    } else {
+        history_text = auto_copy_session.transcription_buffer.str();
     }
+
+    // Finalize session: auto-copy, export, meeting processing
+    finalize_session(params, auto_copy_session, export_session, speaker_tracker,
+                     meeting_session, meeting_output_file, history_text, auto_copy_session.start_time);
 
     // Clear recording state
     g_is_recording.store(false);
     
-    whisper_print_timings(ctx);
     whisper_free(ctx);
-    
+
     // Clean up translation context if it was created
     if (ctx_translate) {
         whisper_free(ctx_translate);
