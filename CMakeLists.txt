@@ -48,6 +48,7 @@ add_executable(${TARGET}
     ptt_manager.cpp
     history_manager.cpp
     text_processing.cpp
+    meeting_manager.cpp
     ../../fixtures/whisper.cpp/examples/common.cpp
     ../../fixtures/whisper.cpp/examples/common-whisper.cpp
     ../../fixtures/whisper.cpp/examples/common-sdl.cpp
