@@ -25,7 +25,6 @@
 #include <iostream>
 #include <sstream>
 #include <cstdlib>
-#include <random>
 #include <csignal>
 #include <atomic>
 #include <termios.h>
@@ -33,7 +32,6 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
-#include <regex>
 #ifdef __APPLE__
 #include <pthread.h>
 #endif
