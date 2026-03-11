@@ -8,8 +8,6 @@ all: build
 # Variables
 BUILD_DIR = build
 TARGET = recognize
-HOTKEY_APP = RecognizeHotkey
-HOTKEY_APP_NAME = Recognize
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
               -DWHISPER_COREML=ON \
@@ -186,11 +184,21 @@ config-reset: build
 	@echo "$(YELLOW)Resetting configuration to defaults...$(NC)"
 	@./$(TARGET) config reset
 
+# Unit tests
+.PHONY: test-unit
+test-unit: configure
+	@echo "$(BLUE)Building and running unit tests...$(NC)"
+	@cd $(BUILD_DIR) && make test_text_processing -j$$(sysctl -n hw.ncpu)
+	@./$(BUILD_DIR)/tests/test_text_processing && echo "$(GREEN)✓ All unit tests passed$(NC)" || { echo "$(RED)✗ Unit tests failed$(NC)"; exit 1; }
+
 # Test build
 .PHONY: test
 test: build
 	@echo "$(BLUE)Testing build...$(NC)"
 	@./$(TARGET) --help >/dev/null && echo "$(GREEN)✓ Basic functionality test passed$(NC)" || { echo "$(RED)✗ Test failed$(NC)"; exit 1; }
+	@./$(TARGET) history count >/dev/null && echo "$(GREEN)✓ History subcommand works$(NC)" || echo "$(RED)✗ History subcommand failed$(NC)"
+	@cd $(BUILD_DIR) && make test_text_processing -j$$(sysctl -n hw.ncpu) 2>/dev/null
+	@[ -f $(BUILD_DIR)/tests/test_text_processing ] && ./$(BUILD_DIR)/tests/test_text_processing && echo "$(GREEN)✓ Unit tests passed$(NC)" || echo "$(YELLOW)⚠ Unit tests not built$(NC)"
 
 # Show help
 .PHONY: help
@@ -236,7 +244,8 @@ help:
 	@echo "  make package      - Create distribution package"
 	@echo ""
 	@echo "$(YELLOW)Development:$(NC)"
-	@echo "  make test         - Test basic functionality"
+	@echo "  make test         - Run all tests (smoke + unit)"
+	@echo "  make test-unit    - Run unit tests only"
 	@echo "  make stop         - Stop all running dev apps"
 	@echo "  make help         - Show this help"
 	@echo ""

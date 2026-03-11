@@ -117,3 +117,13 @@ endif()
 
 # Install target
 install(TARGETS ${TARGET} RUNTIME DESTINATION bin)
+
+# Unit tests for text_processing
+add_executable(test_text_processing
+    tests/test_text_processing.cpp
+    text_processing.cpp
+)
+target_include_directories(test_text_processing PRIVATE ${CMAKE_SOURCE_DIR})
+set_target_properties(test_text_processing PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests
+)
