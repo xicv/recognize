@@ -27,6 +27,14 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
             whisper_print_usage(argc, argv, params);
             exit(0);
         }
+        else if (arg == "-v" || arg == "--version") {
+#ifdef RECOGNIZE_VERSION
+            printf("recognize %s\n", RECOGNIZE_VERSION);
+#else
+            printf("recognize (unknown version)\n");
+#endif
+            exit(0);
+        }
         else if (arg == "-t"    || arg == "--threads")       { if (!require_arg(i, arg)) return false; params.n_threads     = std::stoi(argv[++i]); }
         else if (                  arg == "--step")          { if (!require_arg(i, arg)) return false; params.step_ms       = std::stoi(argv[++i]); }
         else if (                  arg == "--length")        { if (!require_arg(i, arg)) return false; params.length_ms     = std::stoi(argv[++i]); }
