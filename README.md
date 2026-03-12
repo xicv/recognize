@@ -21,11 +21,13 @@ One command. No manual stop needed. recognize listens, auto-stops when you're do
 | Command | Alias | What it does |
 |---------|-------|--------------|
 | `/recognize` | `/r` | Speak, auto-stop on silence, Claude responds |
-| `/recognize c` | `/r c` | Continuous recording until you manually stop |
+| `/recognize c` | `/rc` | Continuous recording until you manually stop |
 | `/recognize m` | `/r m` | Meeting mode with AI-powered summary |
+| `/recognize p` | `/rp` | Push-to-talk (hold space to speak) |
 | `/recognize-stop` | `/rs` | Stop a continuous/meeting session |
+| `/recognize-history` | `/rh` | Search past transcriptions |
 
-**Setup:** Install command files in `~/.claude/commands/` and the launcher at `~/.recognize/claude-launch.sh`. The auto-stop mode uses `--silence-timeout 5` to detect when you've finished speaking, then passes the clean transcript through ASR error correction before sending it to Claude.
+**Setup:** Install the `recognize-voice` plugin, or copy command files to `~/.claude/commands/` and the launcher to `~/.recognize/claude-launch.sh`. See [Installation](#installation) below.
 
 ## What You Can Do
 
@@ -72,23 +74,27 @@ Transcription is automatically copied to your clipboard when a session ends.
 recognize -m base.en --auto-copy
 ```
 
-## Quick Start
+## Installation
+
+**One-command install** (downloads pre-built binary + Claude Code plugin):
 
 ```bash
-# Install dependencies and build
-make install-deps && make build
-
-# Interactive first run (guides you through model selection)
-./recognize
-
-# Or pick a model directly
-./recognize -m base.en
-
-# Install system-wide
-make install
+curl -sSL https://raw.githubusercontent.com/anthropic-xi/recogniz.ing/main/src/cli/install.sh | sh
 ```
 
-**Requirements:** macOS 12.0+, SDL2 (`brew install sdl2`), CMake (`brew install cmake`). Models download automatically on first use.
+**Or with Homebrew:**
+
+```bash
+brew tap recognizing/tap && brew install recognize
+```
+
+**Or build from source:**
+
+```bash
+make install-deps && make build && make install
+```
+
+**Requirements:** macOS 12.0+. Models download automatically on first use.
 
 ## Available Models
 
@@ -201,6 +207,7 @@ Currently English-only, requires models with `tdrz` suffix.
 | `-m, --model` | Model name or file path | (interactive) |
 | `-l, --language` | Source language | `en` |
 | `-t, --threads` | Processing threads | 4 |
+| `-v, --version` | Show version | |
 | `-h, --help` | Show help | |
 
 ### Audio Options
@@ -277,6 +284,12 @@ Currently English-only, requires models with `tdrz` suffix.
 |------|-------------|---------|
 | `-tdrz, --tinydiarize` | Enable speaker segmentation | off |
 
+### Push-to-Talk Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--ptt` | Enable push-to-talk mode | off |
+| `--ptt-key KEY` | PTT key: `space`, `right_option`, `right_ctrl`, `fn`, `f13` | `space` |
+
 ### Model Management
 | Flag | Description |
 |------|-------------|
@@ -286,6 +299,15 @@ Currently English-only, requires models with `tdrz` suffix.
 | `--delete-model MODEL` | Delete a specific model |
 | `--delete-all-models` | Delete all models |
 | `--cleanup` | Remove orphaned files |
+
+### History
+| Command | Description |
+|---------|-------------|
+| `history list [--limit N]` | Recent transcriptions |
+| `history search "<query>"` | Full-text search |
+| `history show <id>` | Full transcript by ID |
+| `history count` | Total entries |
+| `history clear [--older-than Nd]` | Delete entries |
 
 ## Configuration Reference
 
