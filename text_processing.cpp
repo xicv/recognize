@@ -267,35 +267,41 @@ std::string invoke_claude_cli(const std::string& prompt_text, int timeout_second
     return output.str();
 }
 
-// ASR refinement prompt — adapted from battle-tested /recognize-stop skill and
-// informed by research on LLM-based ASR error correction (specificity > generality,
-// preservation rules prevent overcorrection, domain context improves accuracy)
-const std::string ASR_REFINE_PROMPT = R"(You are an ASR post-processing specialist. Your task is to correct speech recognition errors in the transcript below while preserving the speaker's original meaning and intent.
+// ASR refinement prompt — informed by research on LLM-based generative error
+// correction (conservative bias prevents over-correction, phonetic plausibility
+// anchors corrections, accent awareness handles non-native speakers, domain
+// context improves accuracy for developer speech)
+const std::string ASR_REFINE_PROMPT = R"(You are correcting a speech-to-text transcript from a software developer. Technical vocabulary, programming terms, CLI commands, file paths, and library names are expected.
 
-Apply these corrections in priority order:
+CORRECTION PRINCIPLE: Most words are already correct. Only change words that are clearly wrong. Every correction must pass two tests:
+1. The replacement sounds similar to the original word (phonetically plausible)
+2. The corrected sentence reads as a coherent, meaningful whole
+If either test fails, leave the original word unchanged. Under-correcting is always better than over-correcting.
 
-1. CONTEXT-AWARE WORD CORRECTION (most important): For every suspicious or out-of-place word, ask: "What word that SOUNDS LIKE this would make sense here?" Use surrounding sentence meaning and topic domain to infer the intended word. Trust semantic coherence over literal transcription — if a phrase makes no sense as written, it is almost certainly a misrecognition.
+ACCENT AWARENESS: The speaker may have a non-native accent, causing ASR to capture phonetically close but incorrect words. When a word doesn't fit the context, consider what similar-sounding word the speaker likely intended — sounds close in articulation are often confused by both speaker and recognizer.
 
-2. WORD BOUNDARY ERRORS: ASR may split one word into two or merge two into one. Reconstruct based on meaning. Watch for compound words and technical terms broken apart.
+Apply corrections for:
 
-3. NOISE AND ARTIFACT REMOVAL: Remove environmental sounds transcribed as text (background noise, music descriptions). Remove repeated phrases from audio overlap or echo. Remove hallucinated phrases generated during silence.
+MISRECOGNIZED WORDS: Replace words that break sentence meaning with phonetically similar alternatives that restore coherence. Always consider the full sentence context, not just the individual word.
 
-4. SPEECH DISFLUENCY CLEANUP: Remove filler words (um, uh, like, you know). Remove false starts and stuttered words. When the speaker self-corrects mid-sentence, keep ONLY the corrected version.
+WORD BOUNDARIES AND COLLOCATIONS: ASR may split or merge words incorrectly, corrupting compound terms, technical phrases, and natural word combinations. If adjacent words don't form a meaningful expression, reconstruct the intended phrase.
 
-5. SENTENCE RECONSTRUCTION: Fix punctuation, capitalization, and sentence boundaries. Reconstruct fragmented or run-on speech into clear, grammatical sentences.
+GRAMMAR AND FLUENCY: Fix agreement errors, broken tense, and malformed constructions caused by ASR — not the speaker's natural style. Fix punctuation and capitalization. Preserve the speaker's tone and register.
 
-CRITICAL PRESERVATION RULES:
-- Do NOT add ideas, opinions, or content the speaker did not express
-- Do NOT remove substantive content or change the meaning
-- Do NOT expand abbreviations or acronyms the speaker used intentionally
-- Do NOT over-formalize casual speech into stiff written prose — preserve the speaker's natural voice and register
-- When uncertain between two interpretations, prefer the one that makes more sense in context
+ARTIFACTS: Remove hallucinated text, repeated phrases from audio overlap, false starts, self-corrections (keep only the final version), and transcribed background noise.
+
+Constraints:
+- Never add content the speaker did not express
+- Never remove substantive meaning
+- Never change words that already make sense in context
+- Never over-formalize casual or conversational speech
+- When uncertain, keep the original
 
 <transcript>
 [TRANSCRIPT]
 </transcript>
 
-Output ONLY the corrected text. No preamble, no explanation, no commentary.)";
+Output ONLY the corrected text.)";
 
 // Refine a transcript through Claude CLI for ASR error correction.
 // Returns the refined text, or the original text on failure (never loses data).
