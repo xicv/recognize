@@ -1,152 +1,117 @@
-name: Build and Release
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
+  build:
     strategy:
       matrix:
-        arch: [x86_64, arm64]
-    
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x86_64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        
-    - name: Install dependencies
-      run: |
-        brew install cmake sdl2
-        
-    - name: Build for ${{ matrix.arch }}
-      run: |
-        cd src/cli
-        if [ "${{ matrix.arch }}" = "x86_64" ]; then
-          export CMAKE_OSX_ARCHITECTURES=x86_64
-          export MACOSX_DEPLOYMENT_TARGET=10.15
-        else
-          export CMAKE_OSX_ARCHITECTURES=arm64
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-        fi
-        make clean
-        make build
-        
-    - name: Create release package
-      run: |
-        cd src/cli
-        mkdir -p "release-${{ matrix.arch }}"
-        cp recognize "release-${{ matrix.arch }}/"
-        cp README.md TUTORIAL.md INSTALL.md "release-${{ matrix.arch }}/"
-        
-        # Create install script
-        cat > "release-${{ matrix.arch }}/install.sh" << 'EOF'
-        #!/bin/bash
-        set -e
-        echo "Installing recognize..."
-        sudo mkdir -p /usr/local/bin
-        sudo cp recognize /usr/local/bin/
-        sudo chmod +x /usr/local/bin/recognize
-        mkdir -p ~/.recognize/models
-        echo "✅ Installation complete!"
-        echo "Run: recognize --help"
-        EOF
-        chmod +x "release-${{ matrix.arch }}/install.sh"
-        
-        tar czf "recognize-${{ github.ref_name }}-${{ matrix.arch }}.tar.gz" "release-${{ matrix.arch }}"
-        
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: recognize-${{ matrix.arch }}
-        path: src/cli/recognize-${{ github.ref_name }}-${{ matrix.arch }}.tar.gz
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: brew install sdl2 cmake
+
+      - name: Build recognize
+        working-directory: src/cli
+        run: |
+          mkdir -p build && cd build
+          cmake .. \
+            -DWHISPER_COREML=ON \
+            -DWHISPER_COREML_ALLOW_FALLBACK=ON \
+            -DGGML_METAL=ON \
+            -DGGML_METAL_EMBED_LIBRARY=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_ACCELERATE=ON \
+            -DGGML_BLAS=ON \
+            -DGGML_LTO=ON \
+            -DWHISPER_SDL2=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          make -j$(sysctl -n hw.logicalcpu)
+
+      - name: Verify binary
+        working-directory: src/cli
+        run: ./build/recognize --help
+
+      - name: Package
+        working-directory: src/cli
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p release
+          cp build/recognize release/
+          cd release
+          tar czf "recognize-${TAG}-${{ matrix.arch }}.tar.gz" recognize
+          shasum -a 256 *.tar.gz > "checksums-${{ matrix.arch }}.txt"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: src/cli/release/*
 
   create-release:
-    needs: build-macos
-    runs-on: ubuntu-latest
-    
+    needs: build
+    runs-on: macos-14
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download artifacts
-      uses: actions/download-artifact@v3
-      
-    - name: Create universal binary
-      run: |
-        # Extract both architectures
-        mkdir -p universal/recognize-universal
-        tar xzf recognize-x86_64/recognize-*.tar.gz
-        tar xzf recognize-arm64/recognize-*.tar.gz
-        
-        # Use lipo to create universal binary (if both exist)
-        # For now, just use arm64 as primary
-        cp recognize-arm64/release-arm64/* universal/recognize-universal/
-        
-        # Create universal package
-        cd universal
-        tar czf "recognize-${{ github.ref_name }}.tar.gz" recognize-universal/
-        
-    - name: Calculate checksums
-      run: |
-        cd universal
-        sha256sum "recognize-${{ github.ref_name }}.tar.gz" > checksums.txt
-        echo "SHA256: $(cat checksums.txt)"
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          universal/recognize-${{ github.ref_name }}.tar.gz
-          universal/checksums.txt
-          recognize-x86_64/recognize-*-x86_64.tar.gz
-          recognize-arm64/recognize-*-arm64.tar.gz
-        body: |
-          ## recognize ${{ github.ref_name }}
-          
-          Real-time speech recognition CLI with CoreML acceleration for macOS.
-          
-          ### Installation
-          
-          **Homebrew (recommended):**
-          ```bash
-          brew tap YOUR_USERNAME/recognize
-          brew install recognize
-          ```
-          
-          **Manual installation:**
-          ```bash
-          # Download the universal binary
-          curl -L -o recognize.tar.gz https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/recognize-${{ github.ref_name }}.tar.gz
-          tar xzf recognize.tar.gz
-          cd recognize-universal
-          ./install.sh
-          ```
-          
-          ### What's New
-          - 🚀 CoreML acceleration for optimal performance
-          - 🎯 Voice Activity Detection (VAD)
-          - 📱 Multiple Whisper models (tiny to large)
-          - 🌍 Support for 99+ languages
-          - 💾 Comprehensive model management
-          - 📋 Auto-copy to clipboard
-          - ⚙️ Full configuration system
-          
-          ### Requirements
-          - macOS 11.0+ (Big Sur or later)
-          - Microphone access permissions
-          
-          ### Quick Start
-          ```bash
-          recognize                 # Interactive setup
-          recognize -m base.en      # Use base English model
-          recognize --list-models   # Show available models
-          ```
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create universal binary
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # Extract binaries
+          mkdir -p arm64 x86_64
+          tar xzf "artifacts/release-arm64/recognize-${TAG}-arm64.tar.gz" -C arm64
+          tar xzf "artifacts/release-x86_64/recognize-${TAG}-x86_64.tar.gz" -C x86_64
+
+          # Create universal binary
+          lipo -create arm64/recognize x86_64/recognize -output recognize-universal
+          mkdir -p universal
+          cp recognize-universal universal/recognize
+          cd universal
+          tar czf "recognize-${TAG}-universal.tar.gz" recognize
+          cd ..
+
+          # Collect all checksums
+          cat artifacts/release-arm64/checksums-arm64.txt > checksums.txt
+          cat artifacts/release-x86_64/checksums-x86_64.txt >> checksums.txt
+          shasum -a 256 "universal/recognize-${TAG}-universal.tar.gz" >> checksums.txt
+
+      - name: Bundle plugin
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          tar czf "recognize-voice-plugin-${TAG}.tar.gz" -C src/cli plugin/
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --title "recognize $TAG" \
+            --generate-notes \
+            "artifacts/release-arm64/recognize-${TAG}-arm64.tar.gz" \
+            "artifacts/release-x86_64/recognize-${TAG}-x86_64.tar.gz" \
+            "universal/recognize-${TAG}-universal.tar.gz" \
+            "recognize-voice-plugin-${TAG}.tar.gz" \
+            checksums.txt \
+            src/cli/install.sh
