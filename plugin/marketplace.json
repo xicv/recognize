@@ -1,0 +1,15 @@
+{
+  "name": "recognizing",
+  "description": "Voice input tools for Claude Code",
+  "owner": {
+    "name": "recogniz.ing",
+    "url": "https://github.com/anthropic-xi/recogniz.ing"
+  },
+  "plugins": [
+    {
+      "name": "recognize-voice",
+      "source": ".",
+      "description": "Voice input for Claude Code — speak instead of type. /r to record, auto-stops after silence, transcript becomes your input."
+    }
+  ]
+}
