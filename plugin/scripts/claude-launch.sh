@@ -105,7 +105,29 @@ fi
 # PTT mode: recognize auto-exits after single transcription, just wait
 # Auto-stop mode: recognize auto-exits after silence timeout
 if [ "$PTT_MODE" = "1" ]; then
-  # PTT: deterministic exit — just wait for the process (no polling needed)
+  # PTT: wait for PTT_READY signal (model loaded + CoreML warmed up)
+  READY=0
+  for i in $(seq 1 200); do  # 200 * 0.3s = 60s max for model load + CoreML warmup
+    if ! kill -0 "$RPID" 2>/dev/null; then
+      break
+    fi
+    if grep -q "PTT_READY" "$LOGFILE" 2>/dev/null; then
+      READY=1
+      break
+    fi
+    sleep 0.3
+  done
+
+  if [ "$READY" = "0" ]; then
+    echo "ERROR: recognize failed to become ready"
+    echo "---LOG---"
+    cat "$LOGFILE" 2>/dev/null
+    rm -f "$PIDFILE" "$TXTFILE" "$LOGFILE"
+    [ -f "$PEON_CFG" ] && sed -i '' 's/"enabled": false/"enabled": true/' "$PEON_CFG"
+    exit 1
+  fi
+
+  echo "PTT_READY"
   wait "$RPID" 2>/dev/null || true
 else
   # Auto-stop: poll with safety net (100s max)
