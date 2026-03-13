@@ -27,7 +27,7 @@ One command. No manual stop needed. recognize listens, auto-stops when you're do
 | `/recognize-stop` | `/rs` | Stop a continuous/meeting session |
 | `/recognize-history` | `/rh` | Search past transcriptions |
 
-**Setup:** Install the `recognize-voice` plugin, or copy command files to `~/.claude/commands/` and the launcher to `~/.recognize/claude-launch.sh`. See [Installation](#installation) below.
+**Setup:** Install the `recognize` plugin for Claude Code, or copy command files to `~/.claude/commands/` and scripts to `~/.recognize/`. See [Installation](#installation) below.
 
 ## What You Can Do
 
@@ -294,6 +294,7 @@ Currently English-only, requires models with `tdrz` suffix.
 |------|-------------|---------|
 | `--ptt` | Enable push-to-talk mode | off |
 | `--ptt-key KEY` | PTT key: `space`, `right_option`, `right_ctrl`, `fn`, `f13` | `space` |
+| `--ptt-pre-roll N` | Pre-roll audio in ms before key press | 300 |
 
 ### Model Management
 | Flag | Description |
