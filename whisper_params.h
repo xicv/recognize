@@ -88,6 +88,7 @@ struct whisper_params {
     // Push-to-talk settings
     bool ptt_mode = false;
     std::string ptt_key = "space";   // User-friendly key name
+    int32_t ptt_pre_roll_ms = 300;  // Capture audio from before key press (catches onset consonants)
 
     // Refinement settings
     bool refine = false;             // Post-process transcript through Claude for ASR error correction

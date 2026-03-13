@@ -109,6 +109,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         // Push-to-talk options
         else if (arg == "--ptt")                              { params.ptt_mode = true; }
         else if (arg == "--ptt-key")                          { if (!require_arg(i, arg)) return false; params.ptt_key = argv[++i]; }
+        else if (arg == "--ptt-pre-roll")                     { if (!require_arg(i, arg)) return false; params.ptt_pre_roll_ms = std::stoi(argv[++i]); }
         // Refinement
         else if (arg == "-r"    || arg == "--refine")         { params.refine = true; }
         // History
@@ -257,6 +258,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "push-to-talk:\n");
     fprintf(stderr, "            --ptt              [%-7s] enable push-to-talk mode (hold key to record)\n", params.ptt_mode ? "true" : "false");
     fprintf(stderr, "            --ptt-key KEY      [%-7s] PTT key: space, right_option, right_ctrl, fn, f13\n", params.ptt_key.c_str());
+    fprintf(stderr, "            --ptt-pre-roll N   [%-7d] pre-roll audio in ms before key press\n", params.ptt_pre_roll_ms);
     fprintf(stderr, "\n");
     fprintf(stderr, "refinement:\n");
     fprintf(stderr, "  -r,       --refine           [%-7s] refine transcript via Claude CLI (ASR error correction)\n", params.refine ? "true" : "false");

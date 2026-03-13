@@ -328,6 +328,10 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "note: --silence-timeout ignored in PTT mode (key release stops recording)\n");
             params.silence_timeout = 0.0f;
         }
+        if (params.ptt_pre_roll_ms < 0 || params.ptt_pre_roll_ms > 2000) {
+            fprintf(stderr, "error: --ptt-pre-roll must be 0-2000ms\n");
+            return 1;
+        }
     }
 
     // Validate refine: check claude CLI is available early
@@ -453,7 +457,12 @@ int main(int argc, char ** argv) {
     if (use_vad) params.max_tokens = 0;
 
     // Init audio — suppress SDL device listing during init
-    audio_async audio(params.length_ms);
+    // PTT mode needs 30s + pre-roll buffer; standard mode uses length_ms
+    int audio_buffer_ms = params.length_ms;
+    if (params.ptt_mode) {
+        audio_buffer_ms = std::max(audio_buffer_ms, 30000 + params.ptt_pre_roll_ms);
+    }
+    audio_async audio(audio_buffer_ms);
     int saved_stderr = suppress_stderr();
     bool audio_ok = audio.init(params.capture_id, WHISPER_SAMPLE_RATE);
     restore_stderr(saved_stderr);
@@ -679,7 +688,8 @@ int main(int argc, char ** argv) {
             return 7;
         }
 
-        // Clean ready state for PTT
+        // Signal readiness — PTT_READY on stderr for script detection (keeps stdout clean for transcript)
+        fprintf(stderr, "PTT_READY\n");
         if (stderr_is_tty) {
             fprintf(stderr, "[Ready — hold %s to record, release to transcribe]\n",
                     params.ptt_key.c_str());
@@ -700,7 +710,6 @@ int main(int argc, char ** argv) {
             if (!is_running_ptt || g_interrupt_received.load()) break;
 
             // Key pressed — start capture
-            audio.clear();
             auto t_press = std::chrono::high_resolution_clock::now();
             if (stderr_tty) fprintf(stderr, "\r[Recording...] ");
 
@@ -722,21 +731,47 @@ int main(int argc, char ** argv) {
                 continue;
             }
 
-            // Cap at 30s (circular buffer limit)
-            duration_ms = std::min(duration_ms, 30000);
+            // Cap at 30s (circular buffer limit), include pre-roll for onset consonants
+            int total_ms = std::min(duration_ms + params.ptt_pre_roll_ms, 30000);
 
             std::vector<float> pcmf32_ptt;
-            audio.get(duration_ms, pcmf32_ptt);
+            audio.get(total_ms, pcmf32_ptt);
+
+            // Trim trailing silence to reduce inference time (RMS energy check)
+            {
+                const int samples_per_100ms = WHISPER_SAMPLE_RATE / 10;
+                const int min_samples = WHISPER_SAMPLE_RATE / 2;  // keep at least 500ms
+                const float silence_rms_threshold = 0.01f;
+                while (static_cast<int>(pcmf32_ptt.size()) > min_samples + samples_per_100ms) {
+                    float sum_sq = 0.0f;
+                    for (size_t i = pcmf32_ptt.size() - samples_per_100ms; i < pcmf32_ptt.size(); ++i) {
+                        sum_sq += pcmf32_ptt[i] * pcmf32_ptt[i];
+                    }
+                    float rms = std::sqrt(sum_sq / samples_per_100ms);
+                    if (rms < silence_rms_threshold) {
+                        pcmf32_ptt.resize(pcmf32_ptt.size() - samples_per_100ms);
+                    } else {
+                        break;
+                    }
+                }
+            }
 
             if (params.normalize_audio) {
                 normalize_audio(pcmf32_ptt);
             }
 
-            if (stderr_tty) fprintf(stderr, "\r[Transcribing %.1fs...]        ", duration_ms / 1000.0f);
+            float actual_duration_s = pcmf32_ptt.size() / static_cast<float>(WHISPER_SAMPLE_RATE);
+            if (stderr_tty) fprintf(stderr, "\r[Transcribing %.1fs...]        ", actual_duration_s);
 
-            // Single-pass whisper inference
+            // PTT-optimized inference defaults (user overrides preserved)
+            whisper_params ptt_params = params;
+            if (ptt_params.beam_size <= 0) ptt_params.beam_size = 1;
+            ptt_params.no_fallback = true;
+            ptt_params.no_context = true;
+            if (ptt_params.max_tokens <= 32) ptt_params.max_tokens = 64;
+
             std::vector<BilingualSegment> bilingual_results;
-            if (process_audio_segment(ctx, ctx_translate, params, pcmf32_ptt,
+            if (process_audio_segment(ctx, ctx_translate, ptt_params, pcmf32_ptt,
                                       bilingual_results, prompt_tokens) != 0) {
                 fprintf(stderr, "\nfailed to process audio\n");
                 break;  // Exit on error
