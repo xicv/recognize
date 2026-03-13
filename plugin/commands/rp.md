@@ -1,6 +1,6 @@
 ---
-description: "Alias for /recognize p — push-to-talk voice-to-text (hold space to record)"
+description: "Alias for /recognize:ptt — push-to-talk voice-to-text (hold space to record)"
 allowed-tools: [Bash, Read]
 ---
 
-Follow the instructions in /recognize with argument: p $ARGUMENTS
+Run the /recognize:ptt skill with arguments: $ARGUMENTS

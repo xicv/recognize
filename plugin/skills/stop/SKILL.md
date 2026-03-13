@@ -13,7 +13,7 @@ if [ ! -f ~/.recognize/claude-session.pid ]; then echo "NO_SESSION"; exit 0; fi 
 
 ## Step 2: Process the output
 
-- If "NO_SESSION": tell user "No active recording session. Run /recognize first."
+- If "NO_SESSION": tell user "No active recording session. Run /recognize:start first."
 - If nothing between TRANSCRIPT_START and TRANSCRIPT_END (empty/whitespace only): tell user "No speech was detected during the recording."
 - Otherwise: apply the ASR Error Correction process described below.
 
@@ -60,7 +60,7 @@ Different speakers produce systematic sound substitutions that ASR misinterprets
 
 ## Step 3: Check the argument
 
-Check if the user passed an argument: `/recognize-stop c`, `/recognize-stop co`, or `/recognize-stop copy`.
+Check if the user passed an argument: `/recognize:stop c`, `/recognize:stop co`, or `/recognize:stop copy`.
 
 - **Copy-only mode** (`c`, `co`, or `copy`): Show the refined transcript and tell the user it's in clipboard:
   > *<refined transcript in italics>*

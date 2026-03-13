@@ -61,6 +61,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         // CoreML specific options
         else if (arg == "-coreml" || arg == "--coreml")      { params.use_coreml    = true; }
         else if (arg == "-ncoreml" || arg == "--no-coreml")  { params.use_coreml    = false; }
+        else if (arg == "--coreml-gpu-only" || arg == "--no-ane") { params.coreml_no_ane = true; }
         else if (arg == "-cm"   || arg == "--coreml-model")  { if (!require_arg(i, arg)) return false; params.coreml_model  = argv[++i]; }
         // Model management options
         else if (arg == "--list-models")                     { params.list_models   = true; }
@@ -212,6 +213,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     // CoreML specific help
     fprintf(stderr, "  -coreml,  --coreml        [%-7s] enable CoreML acceleration (macOS)\n",             params.use_coreml ? "true" : "false");
     fprintf(stderr, "  -ncoreml, --no-coreml     [%-7s] disable CoreML acceleration\n",                    params.use_coreml ? "false" : "true");
+    fprintf(stderr, "            --coreml-gpu-only [%-7s] skip ANE (fast startup, ~3x slower inference)\n", params.coreml_no_ane ? "true" : "false");
     fprintf(stderr, "  -cm FNAME,--coreml-model FNAME [%-7s] CoreML model path\n",                        params.coreml_model.c_str());
     fprintf(stderr, "\n");
     fprintf(stderr, "auto-copy options:\n");

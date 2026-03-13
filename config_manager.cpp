@@ -126,6 +126,7 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     
     if (effective.default_model) params.model = *effective.default_model;
     if (effective.use_coreml) params.use_coreml = *effective.use_coreml;
+    if (effective.coreml_no_ane) params.coreml_no_ane = *effective.coreml_no_ane;
     if (effective.coreml_model) params.coreml_model = *effective.coreml_model;
     if (effective.capture_device) params.capture_id = *effective.capture_device;
     if (effective.step_ms) params.step_ms = *effective.step_ms;
@@ -158,17 +159,38 @@ void ConfigManager::apply_to_params(whisper_params& params) const {
     if (effective.meeting_initial_prompt) params.initial_prompt = *effective.meeting_initial_prompt;
     if (effective.meeting_timeout) params.meeting_timeout = *effective.meeting_timeout;
     if (effective.meeting_max_single_pass) params.meeting_max_single_pass = *effective.meeting_max_single_pass;
+    // Push-to-talk settings
+    if (effective.ptt_mode) params.ptt_mode = *effective.ptt_mode;
+    if (effective.ptt_key) params.ptt_key = *effective.ptt_key;
+
+    // Refinement settings
+    if (effective.refine) params.refine = *effective.refine;
+    if (effective.history_enabled) params.history_enabled = *effective.history_enabled;
+
     if (effective.silence_timeout) params.silence_timeout = *effective.silence_timeout;
+
+    // Accuracy settings
+    if (effective.entropy_thold) params.entropy_thold = *effective.entropy_thold;
+    if (effective.logprob_thold) params.logprob_thold = *effective.logprob_thold;
+    if (effective.no_speech_thold) params.no_speech_thold = *effective.no_speech_thold;
+    if (effective.length_penalty) params.length_penalty = *effective.length_penalty;
+    if (effective.best_of) params.best_of = *effective.best_of;
+    if (effective.suppress_nst) params.suppress_nst = *effective.suppress_nst;
+    if (effective.carry_initial_prompt) params.carry_initial_prompt = *effective.carry_initial_prompt;
+    if (effective.normalize_audio) params.normalize_audio = *effective.normalize_audio;
 }
 
-std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
-    return {
+const std::map<std::string, std::string>& ConfigManager::get_config_key_map() const {
+    static const std::map<std::string, std::string> key_map = {
         {"model", "default_model"},
         {"default_model", "default_model"},
         {"models_dir", "models_directory"},
         {"models_directory", "models_directory"},
         {"coreml", "use_coreml"},
         {"use_coreml", "use_coreml"},
+        {"coreml_no_ane", "coreml_no_ane"},
+        {"coreml_gpu_only", "coreml_no_ane"},
+        {"no_ane", "coreml_no_ane"},
         {"coreml_model", "coreml_model"},
         {"capture", "capture_device"},
         {"capture_device", "capture_device"},
@@ -222,8 +244,36 @@ std::map<std::string, std::string> ConfigManager::get_config_key_map() const {
         {"meeting_initial_prompt", "meeting_initial_prompt"},
         {"meeting_timeout", "meeting_timeout"},
         {"meeting_max_single_pass", "meeting_max_single_pass"},
-        {"silence_timeout", "silence_timeout"}
+        {"silence_timeout", "silence_timeout"},
+
+        // Push-to-talk configuration keys
+        {"ptt", "ptt_mode"},
+        {"ptt_mode", "ptt_mode"},
+        {"ptt_key", "ptt_key"},
+
+        // Refinement configuration keys
+        {"refine", "refine"},
+
+        // History configuration keys
+        {"history", "history_enabled"},
+        {"history_enabled", "history_enabled"},
+
+        // Accuracy configuration keys
+        {"entropy", "entropy_thold"},
+        {"entropy_thold", "entropy_thold"},
+        {"logprob", "logprob_thold"},
+        {"logprob_thold", "logprob_thold"},
+        {"no_speech", "no_speech_thold"},
+        {"no_speech_thold", "no_speech_thold"},
+        {"length_penalty", "length_penalty"},
+        {"best_of", "best_of"},
+        {"suppress_nst", "suppress_nst"},
+        {"carry_prompt", "carry_initial_prompt"},
+        {"carry_initial_prompt", "carry_initial_prompt"},
+        {"normalize", "normalize_audio"},
+        {"normalize_audio", "normalize_audio"}
     };
+    return key_map;
 }
 
 bool ConfigManager::set_config(const std::string& key, const std::string& value) {
@@ -280,6 +330,7 @@ void ConfigManager::list_config() const {
     std::cout << "  model (default_model)        : " << (effective.default_model ? *effective.default_model : "(auto-select)") << " - Default model to use\n";
     std::cout << "  models_dir                   : " << (effective.models_directory ? *effective.models_directory : "models/") << " - Directory to store models\n";
     std::cout << "  use_coreml                   : " << (effective.use_coreml ? (*effective.use_coreml ? "true" : "false") : "true") << " - Enable CoreML acceleration\n";
+    std::cout << "  coreml_no_ane                : " << (effective.coreml_no_ane ? (*effective.coreml_no_ane ? "true" : "false") : "false") << " - Skip ANE (fast startup, ~3x slower inference)\n";
     std::cout << "  coreml_model                 : " << (effective.coreml_model ? *effective.coreml_model : "(auto)") << " - Specific CoreML model path\n";
     std::cout << "\n";
     
@@ -302,6 +353,18 @@ void ConfigManager::list_config() const {
     std::cout << "  translate                    : " << (effective.translate ? (*effective.translate ? "true" : "false") : "false") << " - Translate to English\n";
     std::cout << "\n";
     
+    // Accuracy Settings
+    std::cout << "🎯 Accuracy Settings:\n";
+    std::cout << "  entropy_thold                : " << (effective.entropy_thold ? std::to_string(*effective.entropy_thold) : "2.4") << " - Entropy threshold for decoder fallback\n";
+    std::cout << "  logprob_thold                : " << (effective.logprob_thold ? std::to_string(*effective.logprob_thold) : "-1.0") << " - Avg log probability threshold (-1.0 = disabled)\n";
+    std::cout << "  no_speech_thold              : " << (effective.no_speech_thold ? std::to_string(*effective.no_speech_thold) : "0.6") << " - No-speech probability threshold\n";
+    std::cout << "  length_penalty               : " << (effective.length_penalty ? std::to_string(*effective.length_penalty) : "-1.0") << " - Length penalty for beam search (-1.0 = disabled)\n";
+    std::cout << "  best_of                      : " << (effective.best_of ? std::to_string(*effective.best_of) : "-1") << " - Best candidates for greedy decoding (-1 = default)\n";
+    std::cout << "  suppress_nst                 : " << (effective.suppress_nst ? (*effective.suppress_nst ? "true" : "false") : "false") << " - Suppress non-speech tokens\n";
+    std::cout << "  carry_prompt                 : " << (effective.carry_initial_prompt ? (*effective.carry_initial_prompt ? "true" : "false") : "false") << " - Keep initial prompt across decode windows\n";
+    std::cout << "  normalize (normalize_audio)  : " << (effective.normalize_audio ? (*effective.normalize_audio ? "true" : "false") : "true") << " - RMS audio normalization\n";
+    std::cout << "\n";
+
     // Output Settings
     std::cout << "📄 Output Settings:\n";
     std::cout << "  timestamps (no_timestamps)   : " << (effective.no_timestamps ? (*effective.no_timestamps ? "disabled" : "enabled") : "enabled") << " - Show timestamps in output\n";
@@ -321,6 +384,18 @@ void ConfigManager::list_config() const {
     std::cout << "  auto_copy_max_size           : " << (effective.auto_copy_max_size_bytes ? std::to_string(*effective.auto_copy_max_size_bytes) : "1048576") << " - Max transcription size (bytes) before skipping auto-copy\n";
     std::cout << "\n";
     
+    // Push-to-Talk Settings
+    std::cout << "🎤 Push-to-Talk Settings:\n";
+    std::cout << "  ptt (ptt_mode)               : " << (effective.ptt_mode ? (*effective.ptt_mode ? "true" : "false") : "false") << " - Enable push-to-talk mode\n";
+    std::cout << "  ptt_key                      : " << (effective.ptt_key ? *effective.ptt_key : "space") << " - PTT key (space, right_option, right_ctrl, fn, f13)\n";
+    std::cout << "  refine                       : " << (effective.refine ? (*effective.refine ? "true" : "false") : "false") << " - Refine transcript via Claude (ASR error correction)\n";
+    std::cout << "\n";
+
+    // History Settings
+    std::cout << "History Settings:\n";
+    std::cout << "  history (history_enabled)    : " << (effective.history_enabled ? (*effective.history_enabled ? "true" : "false") : "true") << " - Save transcripts to history\n";
+    std::cout << "\n";
+
     // Meeting Settings
     std::cout << "🎯 Meeting Settings:\n";
     std::cout << "  meeting (meeting_mode)       : " << (effective.meeting_mode ? (*effective.meeting_mode ? "true" : "false") : "false") << " - Enable meeting mode (AI summarization)\n";
@@ -369,6 +444,7 @@ void ConfigManager::load_env_vars() {
     env_config_.default_model = get_env_var("WHISPER_MODEL");
     env_config_.models_directory = get_env_var("WHISPER_MODELS_DIR");
     env_config_.use_coreml = get_env_bool("WHISPER_COREML");
+    env_config_.coreml_no_ane = get_env_bool("WHISPER_COREML_NO_ANE");
     env_config_.coreml_model = get_env_var("WHISPER_COREML_MODEL");
     env_config_.capture_device = get_env_int("WHISPER_CAPTURE_DEVICE");
     env_config_.step_ms = get_env_int("WHISPER_STEP_MS");
@@ -402,6 +478,24 @@ void ConfigManager::load_env_vars() {
     env_config_.meeting_timeout = get_env_int("WHISPER_MEETING_TIMEOUT");
     env_config_.meeting_max_single_pass = get_env_int("WHISPER_MEETING_MAX_SINGLE_PASS");
     env_config_.silence_timeout = get_env_float("WHISPER_SILENCE_TIMEOUT");
+
+    // Push-to-talk environment variables
+    env_config_.ptt_mode = get_env_bool("WHISPER_PTT");
+    env_config_.ptt_key = get_env_var("WHISPER_PTT_KEY");
+
+    // Refinement environment variables
+    env_config_.refine = get_env_bool("WHISPER_REFINE");
+    env_config_.history_enabled = get_env_bool("WHISPER_HISTORY");
+
+    // Accuracy environment variables
+    env_config_.entropy_thold = get_env_float("WHISPER_ENTROPY_THOLD");
+    env_config_.logprob_thold = get_env_float("WHISPER_LOGPROB_THOLD");
+    env_config_.no_speech_thold = get_env_float("WHISPER_NO_SPEECH_THOLD");
+    env_config_.length_penalty = get_env_float("WHISPER_LENGTH_PENALTY");
+    env_config_.best_of = get_env_int("WHISPER_BEST_OF");
+    env_config_.suppress_nst = get_env_bool("WHISPER_SUPPRESS_NST");
+    env_config_.carry_initial_prompt = get_env_bool("WHISPER_CARRY_PROMPT");
+    env_config_.normalize_audio = get_env_bool("WHISPER_NORMALIZE_AUDIO");
 }
 
 bool ConfigManager::validate_config() const {
@@ -466,6 +560,7 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.default_model) merged.default_model = config.default_model;
         if (config.models_directory) merged.models_directory = config.models_directory;
         if (config.use_coreml) merged.use_coreml = config.use_coreml;
+        if (config.coreml_no_ane) merged.coreml_no_ane = config.coreml_no_ane;
         if (config.coreml_model) merged.coreml_model = config.coreml_model;
         if (config.capture_device) merged.capture_device = config.capture_device;
         if (config.step_ms) merged.step_ms = config.step_ms;
@@ -500,6 +595,24 @@ ConfigData ConfigManager::merge_configs(const std::vector<ConfigData>& configs) 
         if (config.meeting_timeout) merged.meeting_timeout = config.meeting_timeout;
         if (config.meeting_max_single_pass) merged.meeting_max_single_pass = config.meeting_max_single_pass;
         if (config.silence_timeout) merged.silence_timeout = config.silence_timeout;
+
+        // Push-to-talk settings
+        if (config.ptt_mode) merged.ptt_mode = config.ptt_mode;
+        if (config.ptt_key) merged.ptt_key = config.ptt_key;
+
+        // Refinement settings
+        if (config.refine) merged.refine = config.refine;
+        if (config.history_enabled) merged.history_enabled = config.history_enabled;
+
+        // Accuracy settings
+        if (config.entropy_thold) merged.entropy_thold = config.entropy_thold;
+        if (config.logprob_thold) merged.logprob_thold = config.logprob_thold;
+        if (config.no_speech_thold) merged.no_speech_thold = config.no_speech_thold;
+        if (config.length_penalty) merged.length_penalty = config.length_penalty;
+        if (config.best_of) merged.best_of = config.best_of;
+        if (config.suppress_nst) merged.suppress_nst = config.suppress_nst;
+        if (config.carry_initial_prompt) merged.carry_initial_prompt = config.carry_initial_prompt;
+        if (config.normalize_audio) merged.normalize_audio = config.normalize_audio;
     }
 
     return merged;
@@ -537,6 +650,7 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.default_model) add_field("default_model", *config.default_model);
     if (config.models_directory) add_field("models_directory", *config.models_directory);
     if (config.use_coreml) add_bool("use_coreml", *config.use_coreml);
+    if (config.coreml_no_ane) add_bool("coreml_no_ane", *config.coreml_no_ane);
     if (config.coreml_model) add_field("coreml_model", *config.coreml_model);
     if (config.capture_device) add_int("capture_device", *config.capture_device);
     if (config.step_ms) add_int("step_ms", *config.step_ms);
@@ -571,6 +685,24 @@ std::string ConfigManager::config_to_json(const ConfigData& config) const {
     if (config.meeting_timeout) add_int("meeting_timeout", *config.meeting_timeout);
     if (config.meeting_max_single_pass) add_int("meeting_max_single_pass", *config.meeting_max_single_pass);
     if (config.silence_timeout) add_float("silence_timeout", *config.silence_timeout);
+
+    // Push-to-talk settings
+    if (config.ptt_mode) add_bool("ptt_mode", *config.ptt_mode);
+    if (config.ptt_key) add_field("ptt_key", *config.ptt_key);
+
+    // Refinement settings
+    if (config.refine) add_bool("refine", *config.refine);
+    if (config.history_enabled) add_bool("history_enabled", *config.history_enabled);
+
+    // Accuracy settings
+    if (config.entropy_thold) add_float("entropy_thold", *config.entropy_thold);
+    if (config.logprob_thold) add_float("logprob_thold", *config.logprob_thold);
+    if (config.no_speech_thold) add_float("no_speech_thold", *config.no_speech_thold);
+    if (config.length_penalty) add_float("length_penalty", *config.length_penalty);
+    if (config.best_of) add_int("best_of", *config.best_of);
+    if (config.suppress_nst) add_bool("suppress_nst", *config.suppress_nst);
+    if (config.carry_initial_prompt) add_bool("carry_initial_prompt", *config.carry_initial_prompt);
+    if (config.normalize_audio) add_bool("normalize_audio", *config.normalize_audio);
 
     json << "\n}\n";
     return json.str();
@@ -614,6 +746,7 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.default_model = get_string("default_model");
     config.models_directory = get_string("models_directory");
     config.use_coreml = get_bool("use_coreml");
+    config.coreml_no_ane = get_bool("coreml_no_ane");
     config.coreml_model = get_string("coreml_model");
     config.capture_device = get_int("capture_device");
     config.step_ms = get_int("step_ms");
@@ -648,6 +781,24 @@ ConfigData ConfigManager::json_to_config(const std::string& json_str) const {
     config.meeting_timeout = get_int("meeting_timeout");
     config.meeting_max_single_pass = get_int("meeting_max_single_pass");
     config.silence_timeout = get_float("silence_timeout");
+
+    // Push-to-talk settings
+    config.ptt_mode = get_bool("ptt_mode");
+    config.ptt_key = get_string("ptt_key");
+
+    // Refinement settings
+    config.refine = get_bool("refine");
+    config.history_enabled = get_bool("history_enabled");
+
+    // Accuracy settings
+    config.entropy_thold = get_float("entropy_thold");
+    config.logprob_thold = get_float("logprob_thold");
+    config.no_speech_thold = get_float("no_speech_thold");
+    config.length_penalty = get_float("length_penalty");
+    config.best_of = get_int("best_of");
+    config.suppress_nst = get_bool("suppress_nst");
+    config.carry_initial_prompt = get_bool("carry_initial_prompt");
+    config.normalize_audio = get_bool("normalize_audio");
 
     return config;
 }
@@ -701,6 +852,7 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         if (key == "default_model") config.default_model = std::nullopt;
         else if (key == "models_directory") config.models_directory = std::nullopt;
         else if (key == "use_coreml") config.use_coreml = std::nullopt;
+        else if (key == "coreml_no_ane") config.coreml_no_ane = std::nullopt;
         else if (key == "coreml_model") config.coreml_model = std::nullopt;
         else if (key == "capture_device") config.capture_device = std::nullopt;
         else if (key == "step_ms") config.step_ms = std::nullopt;
@@ -731,6 +883,18 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "meeting_timeout") config.meeting_timeout = std::nullopt;
         else if (key == "meeting_max_single_pass") config.meeting_max_single_pass = std::nullopt;
         else if (key == "silence_timeout") config.silence_timeout = std::nullopt;
+        else if (key == "ptt_mode") config.ptt_mode = std::nullopt;
+        else if (key == "ptt_key") config.ptt_key = std::nullopt;
+        else if (key == "refine") config.refine = std::nullopt;
+        else if (key == "history_enabled") config.history_enabled = std::nullopt;
+        else if (key == "entropy_thold") config.entropy_thold = std::nullopt;
+        else if (key == "logprob_thold") config.logprob_thold = std::nullopt;
+        else if (key == "no_speech_thold") config.no_speech_thold = std::nullopt;
+        else if (key == "length_penalty") config.length_penalty = std::nullopt;
+        else if (key == "best_of") config.best_of = std::nullopt;
+        else if (key == "suppress_nst") config.suppress_nst = std::nullopt;
+        else if (key == "carry_initial_prompt") config.carry_initial_prompt = std::nullopt;
+        else if (key == "normalize_audio") config.normalize_audio = std::nullopt;
         else return false;
         return true;
     }
@@ -743,6 +907,13 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
             std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
             if (lower == "true" || lower == "1" || lower == "yes") config.use_coreml = true;
             else if (lower == "false" || lower == "0" || lower == "no") config.use_coreml = false;
+            else return false;
+        }
+        else if (key == "coreml_no_ane") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.coreml_no_ane = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.coreml_no_ane = false;
             else return false;
         }
         else if (key == "coreml_model") config.coreml_model = value;
@@ -823,6 +994,50 @@ bool ConfigManager::set_config_value(ConfigData& config, const std::string& key,
         else if (key == "meeting_timeout") config.meeting_timeout = std::stoi(value);
         else if (key == "meeting_max_single_pass") config.meeting_max_single_pass = std::stoi(value);
         else if (key == "silence_timeout") config.silence_timeout = std::stof(value);
+        else if (key == "ptt_mode") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.ptt_mode = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.ptt_mode = false;
+            else return false;
+        }
+        else if (key == "ptt_key") config.ptt_key = value;
+        else if (key == "refine") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.refine = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.refine = false;
+            else return false;
+        }
+        else if (key == "history_enabled") {
+            config.history_enabled = (value == "true" || value == "1" || value == "yes");
+        }
+        else if (key == "entropy_thold") config.entropy_thold = std::stof(value);
+        else if (key == "logprob_thold") config.logprob_thold = std::stof(value);
+        else if (key == "no_speech_thold") config.no_speech_thold = std::stof(value);
+        else if (key == "length_penalty") config.length_penalty = std::stof(value);
+        else if (key == "best_of") config.best_of = std::stoi(value);
+        else if (key == "suppress_nst") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.suppress_nst = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.suppress_nst = false;
+            else return false;
+        }
+        else if (key == "carry_initial_prompt") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.carry_initial_prompt = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.carry_initial_prompt = false;
+            else return false;
+        }
+        else if (key == "normalize_audio") {
+            std::string lower = value;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "true" || lower == "1" || lower == "yes") config.normalize_audio = true;
+            else if (lower == "false" || lower == "0" || lower == "no") config.normalize_audio = false;
+            else return false;
+        }
         else return false;
     } catch (...) {
         return false;
@@ -835,6 +1050,7 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     if (key == "default_model") return config.default_model;
     else if (key == "models_directory") return config.models_directory;
     else if (key == "use_coreml") return config.use_coreml ? std::make_optional(*config.use_coreml ? "true" : "false") : std::nullopt;
+    else if (key == "coreml_no_ane") return config.coreml_no_ane ? std::make_optional(*config.coreml_no_ane ? "true" : "false") : std::nullopt;
     else if (key == "coreml_model") return config.coreml_model;
     else if (key == "capture_device") return config.capture_device ? std::make_optional(std::to_string(*config.capture_device)) : std::nullopt;
     else if (key == "step_ms") return config.step_ms ? std::make_optional(std::to_string(*config.step_ms)) : std::nullopt;
@@ -865,6 +1081,21 @@ std::optional<std::string> ConfigManager::get_config_value(const ConfigData& con
     else if (key == "meeting_timeout") return config.meeting_timeout ? std::make_optional(std::to_string(*config.meeting_timeout)) : std::nullopt;
     else if (key == "meeting_max_single_pass") return config.meeting_max_single_pass ? std::make_optional(std::to_string(*config.meeting_max_single_pass)) : std::nullopt;
     else if (key == "silence_timeout") return config.silence_timeout ? std::make_optional(std::to_string(*config.silence_timeout)) : std::nullopt;
+    else if (key == "ptt_mode") return config.ptt_mode ? std::make_optional(*config.ptt_mode ? "true" : "false") : std::nullopt;
+    else if (key == "ptt_key") return config.ptt_key;
+    else if (key == "refine") return config.refine ? std::make_optional(*config.refine ? "true" : "false") : std::nullopt;
+    else if (key == "history_enabled") {
+        return config.history_enabled ?
+            std::make_optional(*config.history_enabled ? "true" : "false") : std::nullopt;
+    }
+    else if (key == "entropy_thold") return config.entropy_thold ? std::make_optional(std::to_string(*config.entropy_thold)) : std::nullopt;
+    else if (key == "logprob_thold") return config.logprob_thold ? std::make_optional(std::to_string(*config.logprob_thold)) : std::nullopt;
+    else if (key == "no_speech_thold") return config.no_speech_thold ? std::make_optional(std::to_string(*config.no_speech_thold)) : std::nullopt;
+    else if (key == "length_penalty") return config.length_penalty ? std::make_optional(std::to_string(*config.length_penalty)) : std::nullopt;
+    else if (key == "best_of") return config.best_of ? std::make_optional(std::to_string(*config.best_of)) : std::nullopt;
+    else if (key == "suppress_nst") return config.suppress_nst ? std::make_optional(*config.suppress_nst ? "true" : "false") : std::nullopt;
+    else if (key == "carry_initial_prompt") return config.carry_initial_prompt ? std::make_optional(*config.carry_initial_prompt ? "true" : "false") : std::nullopt;
+    else if (key == "normalize_audio") return config.normalize_audio ? std::make_optional(*config.normalize_audio ? "true" : "false") : std::nullopt;
 
     return std::nullopt;
 }

@@ -6,31 +6,8 @@ allowed-tools: [Bash, Read]
 Check the user's argument: `$ARGUMENTS`
 
 Determine the mode:
-- `/recognize` (no args) → **auto-stop mode** (default)
-- `/recognize c` or `/recognize continue` → continuous mode (manual stop)
-- `/recognize m` or `/recognize meeting` or `/recognize --meeting` → meeting mode
-- `/recognize p` or `/recognize ptt` or `/recognize push` → push-to-talk mode
-
----
-
-## Push-to-talk mode
-
-First, tell the user exactly (BEFORE running the command):
-> Hold **space** to speak, release to send.
-
-Then immediately run this single command (use Bash timeout of 150000ms):
-```
-bash ~/.recognize/claude-launch.sh --ptt
-```
-
-The script launches PTT recording, waits for the user to hold space → speak → release, transcribes, then returns the transcript between `---TRANSCRIPT_START---` and `---TRANSCRIPT_END---` markers.
-
-If output starts with "ERROR", relay the error. Stop.
-
-When the command completes, process the transcript:
-
-- If nothing between TRANSCRIPT_START and TRANSCRIPT_END (empty/whitespace): tell user "No speech was detected."
-- Otherwise: apply ASR Error Correction below, then **treat the corrected text as the user's message**. Respond to it directly as an instruction or question. Do NOT show the raw or corrected transcript separately — just act on it.
+- `/recognize:start` (no args) — **auto-stop mode** (default)
+- `/recognize:start c` or `/recognize:start continue` — continuous mode (manual stop)
 
 ---
 
@@ -43,22 +20,7 @@ bash ~/.recognize/claude-launch.sh --no-auto-stop
 
 If output is "OK", say exactly:
 > Recording started (continuous). Speak now.
-> Run `/recognize-stop` to stop and send.
-
-If output starts with "ERROR", relay the error. Stop.
-
----
-
-## Meeting mode
-
-Run:
-```
-bash ~/.recognize/claude-launch.sh --meeting
-```
-
-If output is "OK_MEETING", say exactly:
-> Meeting recording started (large-v3-turbo model, meeting mode enabled).
-> When finished, run `/recognize-stop` to end and generate the meeting summary.
+> Run `/recognize:stop` to stop and send.
 
 If output starts with "ERROR", relay the error. Stop.
 

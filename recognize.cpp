@@ -483,6 +483,9 @@ int main(int argc, char ** argv) {
 
     // Configure CoreML if available and requested
     #ifdef WHISPER_COREML
+    if (params.use_coreml && params.coreml_no_ane) {
+        setenv("WHISPER_COREML_NO_ANE", "1", 1);
+    }
     if (params.use_coreml) {
         cparams.use_gpu = params.use_gpu;  // Metal for decoder, CoreML for encoder
     } else {
@@ -501,6 +504,8 @@ int main(int argc, char ** argv) {
     whisper_log_set(silent_log_callback, nullptr);
     ggml_log_set(silent_log_callback, nullptr);
 
+    auto t_init_start = std::chrono::high_resolution_clock::now();
+
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
     if (ctx == nullptr) {
         // Restore logging before printing error
@@ -510,9 +515,25 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    // CoreML warm-up: first inference triggers ANE compilation (2-5s delay)
+    if (stderr_is_tty) {
+        auto t_model_loaded = std::chrono::high_resolution_clock::now();
+        auto model_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_model_loaded - t_init_start).count();
+        if (model_ms > 1000) {
+            fprintf(stderr, "[Model loaded in %.1fs]\n", model_ms / 1000.0);
+        }
+    }
+
+    // CoreML warm-up: first inference triggers ANE compilation
+    // For large models this can take 30s+ on first run (ANE caches for subsequent runs)
+    // Skip when coreml_no_ane — CPU+GPU mode has no ANE compilation overhead
     #ifdef WHISPER_COREML
-    if (params.use_coreml) {
+    if (params.use_coreml && !params.coreml_no_ane) {
+        if (stderr_is_tty) {
+            fprintf(stderr, "[Warming up CoreML (first run may take a while)...]\n");
+            fflush(stderr);
+        }
+        auto t_warmup_start = std::chrono::high_resolution_clock::now();
+
         std::vector<float> warmup(WHISPER_SAMPLE_RATE * 1, 0.0f); // 1 second of silence
         whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
         wp.print_realtime   = false;
@@ -520,7 +541,15 @@ int main(int argc, char ** argv) {
         wp.print_timestamps = false;
         wp.print_special    = false;
         wp.n_threads        = params.n_threads;
+        wp.single_segment   = true;
+        wp.max_tokens       = 1;
         whisper_full(ctx, wp, warmup.data(), warmup.size());
+
+        if (stderr_is_tty) {
+            auto t_warmup_end = std::chrono::high_resolution_clock::now();
+            auto warmup_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_warmup_end - t_warmup_start).count();
+            fprintf(stderr, "[CoreML ready in %.1fs]\n", warmup_ms / 1000.0);
+        }
     }
     #endif
 
@@ -955,6 +984,11 @@ int main(int argc, char ** argv) {
 
             // Print results
             {
+                // In sliding window mode, only accumulate to meeting/auto-copy/export/fout
+                // at finalization boundaries (when the window has the most complete text).
+                // VAD mode: every iteration is independent, so always accumulate.
+                const bool is_boundary = use_vad || (((n_iter + 1) % n_new_line) == 0);
+
                 // For pipe mode: clear current buffer before re-rendering
                 if (!stdout_is_tty && !use_vad) {
                     pipe_current_text.str("");
@@ -991,7 +1025,7 @@ int main(int argc, char ** argv) {
                             printf("\n");
                         }
 
-                        // Accumulate text for meeting/auto-copy/export/pipe even in color mode
+                        // Accumulate text for pipe even in color mode (always for display)
                         const char* seg_text = whisper_full_get_segment_text(ctx, i);
                         bool speaker_turn = whisper_full_get_segment_speaker_turn_next(ctx, i);
 
@@ -1004,27 +1038,30 @@ int main(int argc, char ** argv) {
                         if (!stdout_is_tty) {
                             pipe_current_text << seg_text;
                         }
-                        if (params.meeting_mode) {
-                            meeting_session.add_transcription(std::string(seg_text), speaker_turn);
-                            meeting_session.add_transcription(" ");
-                        }
-                        if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                            auto_copy_session.transcription_buffer << seg_text;
-                        }
-                        if (params.export_enabled) {
-                            int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-                            int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                            export_session.segments.emplace_back(t0 / 10, t1 / 10, std::string(seg_text), 1.0f, speaker_turn, speaker_turn ? seg_speaker_id : -1);
+                        // Only accumulate to persistent buffers at finalization boundaries
+                        if (is_boundary) {
+                            if (params.meeting_mode) {
+                                meeting_session.add_transcription(std::string(seg_text), speaker_turn);
+                                meeting_session.add_transcription(" ");
+                            }
+                            if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                                auto_copy_session.transcription_buffer << seg_text;
+                            }
+                            if (params.export_enabled) {
+                                int64_t t0 = whisper_full_get_segment_t0(ctx, i);
+                                int64_t t1 = whisper_full_get_segment_t1(ctx, i);
+                                export_session.segments.emplace_back(t0 / 10, t1 / 10, std::string(seg_text), 1.0f, speaker_turn, speaker_turn ? seg_speaker_id : -1);
+                            }
                         }
                     }
                 } else {
                     // Use segment-based bilingual output
                     std::ostringstream* pbuf = stdout_is_tty ? nullptr : &pipe_current_text;
                     print_bilingual_results(bilingual_results, params, auto_copy_session, export_session, speaker_tracker, &meeting_session,
-                                            stdout_is_tty, pbuf);
+                                            stdout_is_tty, pbuf, is_boundary);
                 }
 
-                if (params.fname_out.length() > 0) {
+                if (is_boundary && params.fname_out.length() > 0) {
                     const int n_seg = whisper_full_n_segments(ctx);
                     for (int i = 0; i < n_seg; ++i) {
                         const char* seg_text = whisper_full_get_segment_text(ctx, i);

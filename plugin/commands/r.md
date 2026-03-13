@@ -1,6 +1,6 @@
 ---
-description: Alias for /recognize — voice-to-text (auto-stops after silence)
+description: Alias for /recognize:start — voice-to-text (auto-stops after silence)
 allowed-tools: [Bash, Read]
 ---
 
-Run the /recognize skill with arguments: $ARGUMENTS
+Run the /recognize:start skill with arguments: $ARGUMENTS

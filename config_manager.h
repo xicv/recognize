@@ -11,6 +11,7 @@ struct ConfigData {
     std::optional<std::string> default_model;
     std::optional<std::string> models_directory;
     std::optional<bool> use_coreml;
+    std::optional<bool> coreml_no_ane;
     std::optional<std::string> coreml_model;
     
     // Audio settings
@@ -51,8 +52,28 @@ struct ConfigData {
     std::optional<int> meeting_timeout;
     std::optional<int> meeting_max_single_pass;
 
+    // Push-to-talk settings
+    std::optional<bool> ptt_mode;
+    std::optional<std::string> ptt_key;
+
+    // Refinement settings
+    std::optional<bool> refine;
+
+    // History settings
+    std::optional<bool> history_enabled;
+
     // Silence timeout settings
     std::optional<float> silence_timeout;
+
+    // Accuracy settings
+    std::optional<float> entropy_thold;
+    std::optional<float> logprob_thold;
+    std::optional<float> no_speech_thold;
+    std::optional<float> length_penalty;
+    std::optional<int> best_of;
+    std::optional<bool> suppress_nst;
+    std::optional<bool> carry_initial_prompt;
+    std::optional<bool> normalize_audio;
 };
 
 class ConfigManager {
@@ -110,7 +131,7 @@ private:
     std::optional<float> get_env_float(const std::string& name) const;
     
     // Config key mapping
-    std::map<std::string, std::string> get_config_key_map() const;
+    const std::map<std::string, std::string>& get_config_key_map() const;
     bool set_config_value(ConfigData& config, const std::string& key, const std::string& value);
     std::optional<std::string> get_config_value(const ConfigData& config, const std::string& key) const;
 };

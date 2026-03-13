@@ -351,23 +351,22 @@ void ModelManager::show_storage_usage() {
 std::string ModelManager::prompt_model_selection() {
     std::cout << "\n🤔 No model specified. Let's choose one!\n";
     list_available_models();
-    
-    std::cout << "\nWhich model would you like to use? ";
-    std::cout << "(or 'q' to quit): ";
-    
-    std::string choice;
-    std::getline(std::cin, choice);
-    
-    if (choice == "q" || choice == "quit") {
-        return "";
+
+    while (true) {
+        std::cout << "\nWhich model would you like to use? ";
+        std::cout << "(or 'q' to quit): ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice) || choice == "q" || choice == "quit") {
+            return "";
+        }
+
+        if (models_.find(choice) != models_.end()) {
+            return choice;
+        }
+
+        std::cout << "❌ Invalid model name. Please choose from the list above.\n";
     }
-    
-    if (models_.find(choice) != models_.end()) {
-        return choice;
-    }
-    
-    std::cout << "❌ Invalid model name. Please choose from the list above.\n";
-    return prompt_model_selection();
 }
 
 bool ModelManager::prompt_download_confirmation(const std::string& model_name) {
@@ -502,20 +501,18 @@ bool ModelManager::extract_coreml_model(const std::string& zip_path, const std::
     
     std::string command = "cd \"" + abs_extract_dir.string() + "\" && unzip -q \"" + abs_zip_path.string() + "\"";
     
-    // Debug output
-    std::cout << "Extracting: " << abs_zip_path.string() << "\n";
-    std::cout << "To: " << abs_extract_dir.string() << "\n";
+    std::cerr << "Extracting CoreML model: " << abs_zip_path.filename().string() << "\n";
     
     int result = std::system(command.c_str());
     
     if (result == 0) {
-        std::cout << "✅ CoreML model extracted successfully\n";
+        std::cerr << "✅ CoreML model extracted successfully\n";
         // Remove the zip file to save space
         std::filesystem::remove(zip_path);
         return true;
     } else {
-        std::cout << "❌ Failed to extract CoreML model (exit code: " << result << ")\n";
-        std::cout << "Command: " << command << "\n";
+        std::cerr << "❌ Failed to extract CoreML model (exit code: " << result << ")\n";
+        std::cerr << "Command: " << command << "\n";
         return false;
     }
 }
@@ -615,7 +612,7 @@ std::string ModelManager::resolve_model(const std::string& model_arg, bool use_c
     
     // Check if model exists locally
     if (model_exists(model_name)) {
-        std::cerr << "✅ Using cached model: " << model_name << "\n";
+        // Model name logged silently — clean loading UX handles user feedback
         
         // Also check/download CoreML model if requested and not exists
         #ifdef __APPLE__

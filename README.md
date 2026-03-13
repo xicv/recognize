@@ -117,14 +117,17 @@ make list-downloaded   # See what you have installed
 ## Build Commands
 
 ```bash
-make build             # Full build (configure + compile)
-make rebuild           # Quick rebuild (skips cmake configure)
+make build             # Full build (sync upstream + configure + compile)
+make rebuild           # Quick rebuild (skips configure and upstream sync)
 make fresh             # Clean + full build
 make clean             # Remove build artifacts
 make test              # Smoke test (--help check)
 make install           # Install to /usr/local/bin
 make install-user      # Install to ~/bin
+make sync-upstream     # Pull latest whisper.cpp (auto-runs on build)
 ```
+
+`make build` automatically pulls the latest whisper.cpp from upstream before compiling. Use `make rebuild` for fast iteration without the sync.
 
 ## Configuration
 
@@ -181,10 +184,11 @@ recognize config set export_format json
 ## Performance Tips
 
 1. **CoreML** is enabled by default - best performance on Apple Silicon
-2. **VAD mode** (`--step 0`) is the most efficient for real-time use
-3. **Thread count** auto-tunes: 4 with CoreML (decoder-only), up to 8 without
-4. **`large-v3-turbo`** gets near large-v3 accuracy at ~40% faster speed
-5. **`tiny.en`** for the fastest possible processing when accuracy is less critical
+2. **`--coreml-gpu-only`** skips ANE compilation for instant startup (~3x slower inference, but no 5-min cold start with large models)
+3. **VAD mode** (`--step 0`) is the most efficient for real-time use
+4. **Thread count** auto-tunes: 4 with CoreML (decoder-only), up to 8 without
+5. **`large-v3-turbo`** gets near large-v3 accuracy at ~40% faster speed
+6. **`tiny.en`** for the fastest possible processing when accuracy is less critical
 
 ## Speaker Segmentation
 
@@ -242,6 +246,7 @@ Currently English-only, requires models with `tdrz` suffix.
 |------|-------------|---------|
 | `--coreml` | Enable CoreML acceleration | on |
 | `--no-coreml` | Disable CoreML | |
+| `--coreml-gpu-only` | Skip ANE (fast startup, ~3x slower inference) | off |
 | `-cm, --coreml-model` | Specific CoreML model path | |
 
 ### Accuracy Options
@@ -362,7 +367,7 @@ WHISPER_MEETING_NAME=standup
 
 **Poor accuracy:** Use a larger model (`base.en` -> `small.en`), try VAD mode (`--step 0`), or adjust VAD threshold (`-vth`).
 
-**CoreML issues:** Runs fine without CoreML (auto-fallback). Force disable with `--no-coreml` if needed.
+**CoreML issues:** Runs fine without CoreML (auto-fallback). Force disable with `--no-coreml` if needed. If startup is slow with large models (ANE compilation), use `--coreml-gpu-only` for instant startup at the cost of ~3x slower inference.
 
 ## Documentation
 

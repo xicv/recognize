@@ -47,7 +47,9 @@ struct SpeakerTracker {
 bool should_auto_copy(const AutoCopySession& session, const whisper_params& params);
 
 // Print bilingual results with formatting and session accumulation
+// accumulate: when false, only display/pipe output is updated (skip meeting/auto-copy/export/history)
 void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params,
                              AutoCopySession& auto_copy_session, ExportSession& export_session,
                              SpeakerTracker& speaker_tracker, MeetingSession* meeting_session = nullptr,
-                             bool tty_output = true, std::ostringstream* pipe_buffer = nullptr);
+                             bool tty_output = true, std::ostringstream* pipe_buffer = nullptr,
+                             bool accumulate = true);

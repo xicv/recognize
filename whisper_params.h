@@ -27,6 +27,7 @@ struct whisper_params {
     bool tinydiarize   = false;
     bool save_audio    = false;
     bool use_coreml    = true;   // Enable CoreML by default on macOS
+    bool coreml_no_ane = false;  // Use CPU+GPU only (skip ANE compilation)
     bool use_gpu       = true;   // Keep GPU support for fallback
     bool flash_attn    = true;  // Flash attention enabled by default (matches whisper.cpp v1.8+)
 
@@ -73,4 +74,24 @@ struct whisper_params {
 
     // Silence timeout settings
     float silence_timeout = 0.0f;      // Auto-stop after N seconds of silence (0 = disabled)
+
+    // Accuracy tuning parameters
+    float entropy_thold    = 2.4f;     // whisper.cpp default; meeting mode overrides to 2.2
+    float logprob_thold    = -1.0f;    // disabled by default
+    float no_speech_thold  = 0.6f;     // whisper.cpp default; meeting mode overrides to 0.4
+    float length_penalty   = -1.0f;    // disabled by default
+    int   best_of          = -1;       // -1 = use whisper.cpp default (5 for greedy)
+    bool  suppress_nst     = false;    // meeting mode overrides to true
+    bool  carry_initial_prompt = false; // meeting mode overrides to true
+    bool  normalize_audio  = true;     // RMS audio normalization
+
+    // Push-to-talk settings
+    bool ptt_mode = false;
+    std::string ptt_key = "space";   // User-friendly key name
+
+    // Refinement settings
+    bool refine = false;             // Post-process transcript through Claude for ASR error correction
+
+    // History settings
+    bool history_enabled = true;     // Save transcripts to ~/.recognize/history.db
 };

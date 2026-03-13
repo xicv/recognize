@@ -115,11 +115,11 @@ if command -v claude &>/dev/null; then
     echo -e "${BLUE}Installing Claude Code plugin...${NC}"
     # Try plugin install via marketplace
     claude plugin marketplace add "${REPO}" --path src/cli/plugin 2>/dev/null && \
-    claude plugin install recognize-voice 2>/dev/null && \
+    claude plugin install recognize 2>/dev/null && \
     echo -e "${GREEN}✓ Claude Code plugin installed${NC}" || \
     echo -e "${YELLOW}⚠ Could not auto-install plugin. Install manually:${NC}"
     echo -e "  claude plugin marketplace add ${REPO}"
-    echo -e "  claude plugin install recognize-voice"
+    echo -e "  claude plugin install recognize"
 else
     echo -e "${YELLOW}⚠ Claude Code CLI not found. Install plugin manually after installing Claude Code.${NC}"
 fi

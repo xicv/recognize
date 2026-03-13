@@ -7,9 +7,9 @@
   },
   "plugins": [
     {
-      "name": "recognize-voice",
+      "name": "recognize",
       "source": ".",
-      "description": "Voice input for Claude Code — speak instead of type. /r to record, auto-stops after silence, transcript becomes your input."
+      "description": "Voice input for Claude Code — start/stop recording, push-to-talk, meeting transcription, and history search."
     }
   ]
 }

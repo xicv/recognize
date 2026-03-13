@@ -275,7 +275,8 @@ bool should_auto_copy(const AutoCopySession& session, const whisper_params& para
 void print_bilingual_results(const std::vector<BilingualSegment>& segments, const whisper_params& params,
                              AutoCopySession& auto_copy_session, ExportSession& export_session,
                              SpeakerTracker& speaker_tracker, MeetingSession* meeting_session,
-                             bool tty_output, std::ostringstream* pipe_buffer) {
+                             bool tty_output, std::ostringstream* pipe_buffer,
+                             bool accumulate) {
 
     // Helper: route text to stdout (TTY) or pipe buffer
     auto out = [&](const std::string& text) {
@@ -294,49 +295,53 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
             if (params.output_mode == "original") {
                 out(seg.original_text);
 
-                // Add to auto-copy buffer
-                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                    auto_copy_session.transcription_buffer << seg.original_text;
-                }
+                if (accumulate) {
+                    // Add to auto-copy buffer
+                    if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                        auto_copy_session.transcription_buffer << seg.original_text;
+                    }
 
-                // Add to export session
-                if (params.export_enabled) {
-                    export_session.segments.emplace_back(
-                        0, 0,
-                        seg.original_text,
-                        seg.original_confidence,
-                        seg.speaker_turn,
-                        seg.speaker_turn ? seg_speaker_id : -1
-                    );
-                }
+                    // Add to export session
+                    if (params.export_enabled) {
+                        export_session.segments.emplace_back(
+                            0, 0,
+                            seg.original_text,
+                            seg.original_confidence,
+                            seg.speaker_turn,
+                            seg.speaker_turn ? seg_speaker_id : -1
+                        );
+                    }
 
-                // Add to meeting session
-                if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
+                    // Add to meeting session
+                    if (meeting_session && params.meeting_mode) {
+                        meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
+                    }
                 }
             }
             else if (params.output_mode == "english") {
                 out(seg.english_text);
 
-                // Add to auto-copy buffer
-                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                    auto_copy_session.transcription_buffer << seg.english_text;
-                }
+                if (accumulate) {
+                    // Add to auto-copy buffer
+                    if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                        auto_copy_session.transcription_buffer << seg.english_text;
+                    }
 
-                // Add to export session
-                if (params.export_enabled) {
-                    export_session.segments.emplace_back(
-                        0, 0,
-                        seg.english_text,
-                        seg.english_confidence,
-                        seg.speaker_turn,
-                        seg.speaker_turn ? seg_speaker_id : -1
-                    );
-                }
+                    // Add to export session
+                    if (params.export_enabled) {
+                        export_session.segments.emplace_back(
+                            0, 0,
+                            seg.english_text,
+                            seg.english_confidence,
+                            seg.speaker_turn,
+                            seg.speaker_turn ? seg_speaker_id : -1
+                        );
+                    }
 
-                // Add to meeting session
-                if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.english_text, seg.speaker_turn);
+                    // Add to meeting session
+                    if (meeting_session && params.meeting_mode) {
+                        meeting_session->add_transcription(seg.english_text, seg.speaker_turn);
+                    }
                 }
             }
             else if (params.output_mode == "bilingual") {
@@ -347,30 +352,32 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 out(lang_code + ": " + seg.original_text + "\n");
                 out("en: " + seg.english_text + "\n");
 
-                // Add to auto-copy buffer (bilingual format)
-                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                    auto_copy_session.transcription_buffer << lang_code << ": " << seg.original_text << "\n";
-                    auto_copy_session.transcription_buffer << "en: " << seg.english_text << "\n";
-                }
+                if (accumulate) {
+                    // Add to auto-copy buffer (bilingual format)
+                    if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                        auto_copy_session.transcription_buffer << lang_code << ": " << seg.original_text << "\n";
+                        auto_copy_session.transcription_buffer << "en: " << seg.english_text << "\n";
+                    }
 
-                // Add to export session (combine both texts)
-                if (params.export_enabled) {
-                    std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
-                    export_session.segments.emplace_back(
-                        0, 0,
-                        combined_text,
-                        (seg.original_confidence + seg.english_confidence) / 2.0f,
-                        seg.speaker_turn,
-                        seg.speaker_turn ? seg_speaker_id : -1
-                    );
-                }
+                    // Add to export session (combine both texts)
+                    if (params.export_enabled) {
+                        std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
+                        export_session.segments.emplace_back(
+                            0, 0,
+                            combined_text,
+                            (seg.original_confidence + seg.english_confidence) / 2.0f,
+                            seg.speaker_turn,
+                            seg.speaker_turn ? seg_speaker_id : -1
+                        );
+                    }
 
-                // Add to meeting session (clean format, just the content)
-                if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
-                    meeting_session->add_transcription(" ");
-                    meeting_session->add_transcription(seg.english_text);
-                    meeting_session->add_transcription("\n");
+                    // Add to meeting session (clean format, just the content)
+                    if (meeting_session && params.meeting_mode) {
+                        meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
+                        meeting_session->add_transcription(" ");
+                        meeting_session->add_transcription(seg.english_text);
+                        meeting_session->add_transcription("\n");
+                    }
                 }
             }
         }
@@ -383,29 +390,31 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 if (seg.speaker_turn) out(" [SPEAKER_TURN]");
                 out("\n");
 
-                // Add to auto-copy buffer
-                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                    auto_copy_session.transcription_buffer << timestamp_prefix << seg.original_text;
-                    if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
-                    auto_copy_session.transcription_buffer << "\n";
-                }
+                if (accumulate) {
+                    // Add to auto-copy buffer
+                    if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                        auto_copy_session.transcription_buffer << timestamp_prefix << seg.original_text;
+                        if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                        auto_copy_session.transcription_buffer << "\n";
+                    }
 
-                // Add to export session
-                if (params.export_enabled) {
-                    export_session.segments.emplace_back(
-                        seg.t0 / 10,
-                        seg.t1 / 10,
-                        seg.original_text,
-                        seg.original_confidence,
-                        seg.speaker_turn,
-                        seg.speaker_turn ? seg_speaker_id : -1
-                    );
-                }
+                    // Add to export session
+                    if (params.export_enabled) {
+                        export_session.segments.emplace_back(
+                            seg.t0 / 10,
+                            seg.t1 / 10,
+                            seg.original_text,
+                            seg.original_confidence,
+                            seg.speaker_turn,
+                            seg.speaker_turn ? seg_speaker_id : -1
+                        );
+                    }
 
-                // Add to meeting session (clean format, just the content)
-                if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
-                    meeting_session->add_transcription(" ");
+                    // Add to meeting session (clean format, just the content)
+                    if (meeting_session && params.meeting_mode) {
+                        meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
+                        meeting_session->add_transcription(" ");
+                    }
                 }
             }
             else if (params.output_mode == "english") {
@@ -413,29 +422,31 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 if (seg.speaker_turn) out(" [SPEAKER_TURN]");
                 out("\n");
 
-                // Add to auto-copy buffer
-                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                    auto_copy_session.transcription_buffer << timestamp_prefix << seg.english_text;
-                    if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
-                    auto_copy_session.transcription_buffer << "\n";
-                }
+                if (accumulate) {
+                    // Add to auto-copy buffer
+                    if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                        auto_copy_session.transcription_buffer << timestamp_prefix << seg.english_text;
+                        if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                        auto_copy_session.transcription_buffer << "\n";
+                    }
 
-                // Add to export session
-                if (params.export_enabled) {
-                    export_session.segments.emplace_back(
-                        seg.t0 / 10,
-                        seg.t1 / 10,
-                        seg.english_text,
-                        seg.english_confidence,
-                        seg.speaker_turn,
-                        seg.speaker_turn ? seg_speaker_id : -1
-                    );
-                }
+                    // Add to export session
+                    if (params.export_enabled) {
+                        export_session.segments.emplace_back(
+                            seg.t0 / 10,
+                            seg.t1 / 10,
+                            seg.english_text,
+                            seg.english_confidence,
+                            seg.speaker_turn,
+                            seg.speaker_turn ? seg_speaker_id : -1
+                        );
+                    }
 
-                // Add to meeting session (clean format, just the content)
-                if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.english_text, seg.speaker_turn);
-                    meeting_session->add_transcription(" ");
+                    // Add to meeting session (clean format, just the content)
+                    if (meeting_session && params.meeting_mode) {
+                        meeting_session->add_transcription(seg.english_text, seg.speaker_turn);
+                        meeting_session->add_transcription(" ");
+                    }
                 }
             }
             else if (params.output_mode == "bilingual") {
@@ -448,33 +459,35 @@ void print_bilingual_results(const std::vector<BilingualSegment>& segments, cons
                 if (seg.speaker_turn) out(" [SPEAKER_TURN]");
                 out("\n");
 
-                // Add to auto-copy buffer
-                if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
-                    auto_copy_session.transcription_buffer << timestamp_prefix << lang_code << ": " << seg.original_text << "\n";
-                    auto_copy_session.transcription_buffer << timestamp_prefix << "en: " << seg.english_text;
-                    if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
-                    auto_copy_session.transcription_buffer << "\n";
-                }
+                if (accumulate) {
+                    // Add to auto-copy buffer
+                    if ((params.auto_copy_enabled && should_auto_copy(auto_copy_session, params)) || params.history_enabled) {
+                        auto_copy_session.transcription_buffer << timestamp_prefix << lang_code << ": " << seg.original_text << "\n";
+                        auto_copy_session.transcription_buffer << timestamp_prefix << "en: " << seg.english_text;
+                        if (seg.speaker_turn) auto_copy_session.transcription_buffer << " [SPEAKER_TURN]";
+                        auto_copy_session.transcription_buffer << "\n";
+                    }
 
-                // Add to export session (combine both texts)
-                if (params.export_enabled) {
-                    std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
-                    export_session.segments.emplace_back(
-                        seg.t0 / 10,
-                        seg.t1 / 10,
-                        combined_text,
-                        (seg.original_confidence + seg.english_confidence) / 2.0f,
-                        seg.speaker_turn,
-                        seg.speaker_turn ? seg_speaker_id : -1
-                    );
-                }
+                    // Add to export session (combine both texts)
+                    if (params.export_enabled) {
+                        std::string combined_text = lang_code + ": " + seg.original_text + "\nen: " + seg.english_text;
+                        export_session.segments.emplace_back(
+                            seg.t0 / 10,
+                            seg.t1 / 10,
+                            combined_text,
+                            (seg.original_confidence + seg.english_confidence) / 2.0f,
+                            seg.speaker_turn,
+                            seg.speaker_turn ? seg_speaker_id : -1
+                        );
+                    }
 
-                // Add to meeting session (clean format, just the content)
-                if (meeting_session && params.meeting_mode) {
-                    meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
-                    meeting_session->add_transcription(" ");
-                    meeting_session->add_transcription(seg.english_text);
-                    meeting_session->add_transcription(" ");
+                    // Add to meeting session (clean format, just the content)
+                    if (meeting_session && params.meeting_mode) {
+                        meeting_session->add_transcription(seg.original_text, seg.speaker_turn);
+                        meeting_session->add_transcription(" ");
+                        meeting_session->add_transcription(seg.english_text);
+                        meeting_session->add_transcription(" ");
+                    }
                 }
             }
         }

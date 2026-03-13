@@ -32,7 +32,7 @@ command -v recognize &>/dev/null || { echo "ERROR: recognize not installed"; exi
 
 # Check for active session (PID file exists and process alive)
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-  echo "ERROR: session already active, run /recognize-stop first"
+  echo "ERROR: session already active, run /recognize:stop first"
   exit 1
 fi
 
@@ -55,7 +55,8 @@ elif [ "$PTT_MODE" = "1" ]; then
   RECOGNIZE_CMD="recognize --ptt --no-export --no-timestamps --model large-v3-turbo"
 else
   # Voice input: base.en — best speed/accuracy balance (5% WER, <1s startup with CoreML)
-  RECOGNIZE_CMD="recognize --no-export --no-timestamps --model base.en --output-mode original"
+  # --coreml-gpu-only skips ANE compilation for instant startup
+  RECOGNIZE_CMD="recognize --no-export --no-timestamps --model base.en --output-mode original --coreml-gpu-only"
   if [ "$NO_AUTO_STOP" = "0" ]; then
     RECOGNIZE_CMD="$RECOGNIZE_CMD --silence-timeout 5"
   fi

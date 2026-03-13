@@ -65,7 +65,7 @@ target_include_directories(${TARGET} PRIVATE
 )
 
 # Version
-set(RECOGNIZE_VERSION "1.0.0")
+set(RECOGNIZE_VERSION "1.1.0")
 
 # Compile definitions — only define WHISPER_COREML when the subproject enables it
 # GGML_USE_METAL is never read by any source code, so it is omitted

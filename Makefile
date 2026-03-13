@@ -8,6 +8,7 @@ all: build
 # Variables
 BUILD_DIR = build
 TARGET = recognize
+WHISPER_DIR = ../../fixtures/whisper.cpp
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
               -DWHISPER_COREML=ON \
@@ -38,9 +39,28 @@ check-deps:
 	@pkg-config --exists sdl2 || { echo "$(RED)Error: SDL2 not found. Install with: brew install sdl2$(NC)"; exit 1; }
 	@echo "$(GREEN)✓ All dependencies found$(NC)"
 
+# Pull latest whisper.cpp from upstream before building
+.PHONY: sync-upstream
+sync-upstream:
+	@if [ -d "$(WHISPER_DIR)/.git" ]; then \
+		echo "$(BLUE)Syncing whisper.cpp upstream...$(NC)"; \
+		cd $(WHISPER_DIR) && \
+		BEFORE=$$(git rev-parse HEAD) && \
+		git fetch origin 2>/dev/null && \
+		git merge --ff-only origin/master 2>/dev/null && \
+		AFTER=$$(git rev-parse HEAD) && \
+		if [ "$$BEFORE" != "$$AFTER" ]; then \
+			echo "$(GREEN)✓ Updated whisper.cpp: $$(git log --oneline -1)$(NC)"; \
+		else \
+			echo "$(GREEN)✓ whisper.cpp already up to date$(NC)"; \
+		fi; \
+	else \
+		echo "$(YELLOW)⚠ whisper.cpp submodule not found, skipping sync$(NC)"; \
+	fi
+
 # Configure build
 .PHONY: configure
-configure: check-deps
+configure: check-deps sync-upstream
 	@echo "$(BLUE)Configuring build...$(NC)"
 	@mkdir -p $(BUILD_DIR)
 	@cd $(BUILD_DIR) && cmake .. $(CMAKE_FLAGS)
@@ -246,6 +266,7 @@ help:
 	@echo "$(YELLOW)Development:$(NC)"
 	@echo "  make test         - Run all tests (smoke + unit)"
 	@echo "  make test-unit    - Run unit tests only"
+	@echo "  make sync-upstream - Pull latest whisper.cpp (auto-runs on build)"
 	@echo "  make stop         - Stop all running dev apps"
 	@echo "  make help         - Show this help"
 	@echo ""

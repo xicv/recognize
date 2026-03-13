@@ -24,7 +24,11 @@ ExportManager::ExportManager()
     metadata_.vad_threshold = 0.6f;
     metadata_.step_ms = 3000;
     metadata_.length_ms = 10000;
-    metadata_.version = "recognize-1.0.0";
+#ifdef RECOGNIZE_VERSION
+    metadata_.version = "recognize-" RECOGNIZE_VERSION;
+#else
+    metadata_.version = "recognize-dev";
+#endif
 }
 
 void ExportManager::set_format(ExportFormat format) {
@@ -451,7 +455,9 @@ std::string ExportManager::get_current_timestamp() {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     std::ostringstream timestamp;
-    timestamp << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+    std::tm tm_buf;
+    localtime_r(&time_t, &tm_buf);
+    timestamp << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
     return timestamp.str();
 }
 
@@ -492,8 +498,10 @@ std::string ExportManager::generate_filename(ExportFormat format) {
     auto time_t = std::chrono::system_clock::to_time_t(now);
     
     std::ostringstream filename;
-    filename << "transcript_" 
-             << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S");
+    std::tm tm_buf;
+    localtime_r(&time_t, &tm_buf);
+    filename << "transcript_"
+             << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
     
     if (!metadata_.session_id.empty()) {
         filename << "_" << metadata_.session_id;
