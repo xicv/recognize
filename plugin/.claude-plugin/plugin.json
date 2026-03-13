@@ -1,7 +1,7 @@
 {
   "name": "recognize",
-  "version": "2.0.0",
-  "description": "Voice input for Claude Code — /recognize:start, /recognize:stop, /recognize:ptt, /recognize:meeting, /recognize:history",
+  "version": "2.1.0",
+  "description": "Voice input for Claude Code — real-time transcription, push-to-talk, meeting recording, and history search via /recognize:start, /recognize:ptt, /recognize:meeting, /recognize:history",
   "author": "recogniz.ing",
   "homepage": "https://github.com/anthropic-xi/recogniz.ing",
   "platforms": ["macos"]
