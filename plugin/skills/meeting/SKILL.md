@@ -5,7 +5,7 @@ allowed-tools: [Bash, Read]
 
 Run:
 ```
-bash ${CLAUDE_SKILL_DIR}/../scripts/claude-launch.sh --meeting
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/claude-launch.sh --meeting
 ```
 
 If output is "OK_MEETING", say exactly:

@@ -7,7 +7,7 @@ allowed-tools: [Bash, Read]
 
 Run this command:
 ```
-bash ${CLAUDE_SKILL_DIR}/../scripts/claude-stop.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/claude-stop.sh
 ```
 
 ## Step 2: Process the output
@@ -16,7 +16,7 @@ bash ${CLAUDE_SKILL_DIR}/../scripts/claude-stop.sh
 - If nothing between TRANSCRIPT_START and TRANSCRIPT_END (empty/whitespace only): tell user "No speech was detected during the recording."
 - Otherwise: apply the ASR Error Correction process described below.
 
-!`cat ${CLAUDE_SKILL_DIR}/../scripts/asr-correction.md`
+!`cat ${CLAUDE_PLUGIN_ROOT}/scripts/asr-correction.md`
 
 ## Step 3: Check the argument
 

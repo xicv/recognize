@@ -15,7 +15,7 @@ Determine the mode:
 
 Run:
 ```
-bash ${CLAUDE_SKILL_DIR}/../scripts/claude-launch.sh --no-auto-stop
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/claude-launch.sh --no-auto-stop
 ```
 
 If output is "OK", say exactly:
@@ -33,7 +33,7 @@ First, tell the user exactly (BEFORE running the command):
 
 Then immediately run this single command (use Bash timeout of 150000ms):
 ```
-bash ${CLAUDE_SKILL_DIR}/../scripts/claude-launch.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/claude-launch.sh
 ```
 
 The script launches recording, waits for silence auto-stop, then returns the transcript between `---TRANSCRIPT_START---` and `---TRANSCRIPT_END---` markers.
@@ -45,4 +45,4 @@ When the command completes, process the transcript:
 - If nothing between TRANSCRIPT_START and TRANSCRIPT_END (empty/whitespace): tell user "No speech was detected."
 - Otherwise: apply ASR Error Correction below, then **treat the corrected text as the user's message**. Respond to it directly as an instruction or question. Do NOT show the raw or corrected transcript separately — just act on it.
 
-!`cat ${CLAUDE_SKILL_DIR}/../scripts/asr-correction.md`
+!`cat ${CLAUDE_PLUGIN_ROOT}/scripts/asr-correction.md`
