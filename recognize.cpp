@@ -714,9 +714,64 @@ int main(int argc, char ** argv) {
             auto t_press = std::chrono::high_resolution_clock::now();
             if (stderr_tty) fprintf(stderr, "\r[Recording...] ");
 
-            // Capture while key is held
+            // Capture while key is held, with periodic streaming preview
+            auto t_last_preview = t_press;
+            std::string last_preview_text;
+
             while (ptt.is_key_held() && is_running_ptt && !g_interrupt_received.load()) {
                 is_running_ptt = sdl_poll_events();
+
+                auto now = std::chrono::high_resolution_clock::now();
+                int elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_press).count());
+                int since_preview = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_last_preview).count());
+
+                // Run streaming preview every 3s, starting after 2s of recording
+                if (elapsed_ms >= 2000 && since_preview >= 3000) {
+                    t_last_preview = now;
+
+                    // Grab recent audio (up to 28s for single whisper window)
+                    int preview_ms = std::min(elapsed_ms + params.ptt_pre_roll_ms, 28000);
+                    std::vector<float> preview_audio;
+                    audio.get(preview_ms, preview_audio);
+
+                    if (params.normalize_audio) normalize_audio(preview_audio);
+
+                    whisper_params preview_params = params;
+                    preview_params.beam_size = 1;
+                    preview_params.no_fallback = true;
+                    preview_params.no_context = true;
+                    preview_params.max_tokens = 128;
+
+                    std::vector<BilingualSegment> preview_results;
+                    if (process_audio_segment(ctx, nullptr, preview_params, preview_audio,
+                                              preview_results, prompt_tokens) == 0) {
+                        std::string preview_text;
+                        for (const auto& seg : preview_results) {
+                            if (!seg.original_text.empty())
+                                preview_text += seg.original_text;
+                            else if (!seg.english_text.empty())
+                                preview_text += seg.english_text;
+                        }
+                        preview_text = filter_hallucinations(preview_text);
+
+                        if (!preview_text.empty() && preview_text != last_preview_text) {
+                            // Show short tail (~80 chars) with duration indicator
+                            std::string display = preview_text;
+                            if (display.size() > 80) {
+                                display = "..." + display.substr(display.size() - 77);
+                            }
+                            if (stderr_tty) {
+                                fprintf(stderr, "\r\033[2K[%ds]%s", elapsed_ms / 1000, display.c_str());
+                            }
+                            fprintf(stderr, "\n[PREVIEW %ds]%s\n", elapsed_ms / 1000, display.c_str());
+                            fflush(stderr);
+                            last_preview_text = preview_text;
+                        }
+                    }
+
+                    if (stderr_tty) fprintf(stderr, "\r[Recording...] ");
+                }
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             if (!is_running_ptt || g_interrupt_received.load()) break;
@@ -766,33 +821,60 @@ int main(int argc, char ** argv) {
                 normalize_audio(pcmf32_ptt);
             }
 
-            // Prepend 500ms of silence so Whisper's attention reliably captures
-            // the first word (abrupt speech onset without lead-in causes drops)
-            {
-                const int lead_in_samples = WHISPER_SAMPLE_RATE / 2;  // 500ms
-                std::vector<float> padded(lead_in_samples + pcmf32_ptt.size(), 0.0f);
-                std::copy(pcmf32_ptt.begin(), pcmf32_ptt.end(), padded.begin() + lead_in_samples);
-                pcmf32_ptt = std::move(padded);
-            }
-
             float actual_duration_s = pcmf32_ptt.size() / static_cast<float>(WHISPER_SAMPLE_RATE);
             if (stderr_tty) fprintf(stderr, "\r[Transcribing %.1fs...]        ", actual_duration_s);
 
-            // PTT-optimized inference defaults (user overrides preserved)
+            // PTT-optimized inference: beam search for quality, no temperature
+            // fallback (causes issues at chunk boundaries). Short chunks (15s)
+            // keep whisper reliable — longer audio causes attention dropout.
             whisper_params ptt_params = params;
             if (ptt_params.beam_size <= 0) ptt_params.beam_size = 5;
-            ptt_params.no_fallback = false;
+            ptt_params.no_fallback = true;
             ptt_params.no_context = true;
-            // Scale max_tokens to audio duration (~4 tokens/sec speech rate, minimum 128)
-            int estimated_tokens = std::max(128, static_cast<int>(actual_duration_s * 5));
-            ptt_params.max_tokens = std::max(ptt_params.max_tokens, estimated_tokens);
+            ptt_params.max_tokens = 256;
 
+            // Process audio in ≤15-second chunks with silence lead-in per chunk.
+            // Shorter chunks prevent whisper's attention from losing the beginning
+            // of longer audio (known issue with encoder-decoder models).
             std::vector<BilingualSegment> bilingual_results;
-            if (process_audio_segment(ctx, ctx_translate, ptt_params, pcmf32_ptt,
-                                      bilingual_results, prompt_tokens) != 0) {
-                fprintf(stderr, "\nfailed to process audio\n");
-                break;  // Exit on error
+            const int chunk_samples = WHISPER_SAMPLE_RATE * 15;
+            const int lead_in_samples = WHISPER_SAMPLE_RATE / 2;  // 500ms
+            bool inference_failed = false;
+
+            for (size_t offset = 0; offset < pcmf32_ptt.size(); offset += chunk_samples) {
+                size_t remaining = pcmf32_ptt.size() - offset;
+                size_t chunk_size = std::min(remaining, static_cast<size_t>(chunk_samples));
+
+                // Avoid a tiny trailing chunk (< 2s) — merge with previous
+                if (remaining > static_cast<size_t>(chunk_samples) &&
+                    remaining < static_cast<size_t>(chunk_samples + WHISPER_SAMPLE_RATE * 2)) {
+                    chunk_size = remaining;
+                }
+
+                // Extract chunk and prepend 500ms silence lead-in
+                std::vector<float> chunk(lead_in_samples + chunk_size, 0.0f);
+                std::copy(pcmf32_ptt.begin() + offset,
+                          pcmf32_ptt.begin() + offset + chunk_size,
+                          chunk.begin() + lead_in_samples);
+
+                if (stderr_tty && offset > 0) {
+                    fprintf(stderr, "\r[Transcribing %.1fs... chunk %zu/%zu]        ",
+                            actual_duration_s, offset / chunk_samples + 1,
+                            (pcmf32_ptt.size() + chunk_samples - 1) / chunk_samples);
+                }
+
+                std::vector<BilingualSegment> chunk_results;
+                if (process_audio_segment(ctx, ctx_translate, ptt_params, chunk,
+                                          chunk_results, prompt_tokens) != 0) {
+                    fprintf(stderr, "\nfailed to process audio chunk\n");
+                    inference_failed = true;
+                    break;
+                }
+
+                bilingual_results.insert(bilingual_results.end(),
+                                         chunk_results.begin(), chunk_results.end());
             }
+            if (inference_failed) break;
 
             // Apply hallucination filter
             for (auto& seg : bilingual_results) {

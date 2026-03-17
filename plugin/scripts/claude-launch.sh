@@ -128,6 +128,19 @@ if [ "$PTT_MODE" = "1" ]; then
   fi
 
   echo "PTT_READY"
+
+  # Stream preview lines while recording (poll LOGFILE for [PREVIEW] markers)
+  LAST_PREVIEW=""
+  PREVIEW_COUNT=0
+  while kill -0 "$RPID" 2>/dev/null; do
+    PREVIEW=$(grep '^\[PREVIEW' "$LOGFILE" 2>/dev/null | tail -1 | sed 's/^\[PREVIEW[^]]*\]//')
+    if [ -n "$PREVIEW" ] && [ "$PREVIEW" != "$LAST_PREVIEW" ]; then
+      PREVIEW_COUNT=$((PREVIEW_COUNT + 1))
+      echo "[Listening...]$PREVIEW"
+      LAST_PREVIEW="$PREVIEW"
+    fi
+    sleep 0.3
+  done
   wait "$RPID" 2>/dev/null || true
 else
   # Auto-stop: poll with safety net (100s max)

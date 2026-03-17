@@ -36,11 +36,11 @@ int process_audio_segment(struct whisper_context* ctx, struct whisper_context* c
     wparams.print_special    = params.print_special;
     wparams.print_realtime   = false;
     wparams.print_timestamps = !params.no_timestamps;
-    // Force single segment for short audio (streaming mode chunks ≤30s).
-    // For longer audio (PTT recordings >30s), allow multi-segment processing
-    // so whisper_full() iterates over all 30-second windows.
+    // Force single segment for audio within whisper's 30-second window.
+    // PTT chunks are ≤28s + 0.5s silence lead-in = ≤28.5s, so use 29s threshold.
+    // For longer audio, allow multi-segment processing.
     float audio_len_s = pcmf32.size() / static_cast<float>(WHISPER_SAMPLE_RATE);
-    wparams.single_segment   = (audio_len_s <= 28.0f);
+    wparams.single_segment   = (audio_len_s <= 29.0f);
     wparams.max_tokens       = params.max_tokens;
     wparams.language         = params.language.c_str();
     wparams.n_threads        = params.n_threads;
