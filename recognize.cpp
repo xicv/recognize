@@ -97,6 +97,7 @@ static bool check_interrupt_with_confirmation() {
 
         if (c == 'y' || c == 'Y') {
             std::cout << "\n Stopping recording and exiting...\n" << std::endl;
+            g_is_recording.store(false);  // prevent re-prompting on subsequent checks
             return true;
         } else {
             std::cout << "\n Continuing recording...\n" << std::endl;
@@ -457,10 +458,10 @@ int main(int argc, char ** argv) {
     if (use_vad) params.max_tokens = 0;
 
     // Init audio — suppress SDL device listing during init
-    // PTT mode needs 30s + pre-roll buffer; standard mode uses length_ms
+    // PTT mode needs large buffer for long recordings; standard mode uses length_ms
     int audio_buffer_ms = params.length_ms;
     if (params.ptt_mode) {
-        audio_buffer_ms = std::max(audio_buffer_ms, 30000 + params.ptt_pre_roll_ms);
+        audio_buffer_ms = std::max(audio_buffer_ms, 300000 + params.ptt_pre_roll_ms);
     }
     audio_async audio(audio_buffer_ms);
     int saved_stderr = suppress_stderr();
@@ -731,8 +732,13 @@ int main(int argc, char ** argv) {
                 continue;
             }
 
-            // Cap at 30s (circular buffer limit), include pre-roll for onset consonants
-            int total_ms = std::min(duration_ms + params.ptt_pre_roll_ms, 30000);
+            // Include pre-roll for onset consonants, cap at buffer capacity
+            int total_ms = std::min(duration_ms + params.ptt_pre_roll_ms, audio_buffer_ms);
+
+            if (stderr_tty && duration_ms + params.ptt_pre_roll_ms > audio_buffer_ms) {
+                fprintf(stderr, "\r[Warning: held %.0fs but buffer holds %.0fs — beginning truncated]\n",
+                        duration_ms / 1000.0, audio_buffer_ms / 1000.0);
+            }
 
             std::vector<float> pcmf32_ptt;
             audio.get(total_ms, pcmf32_ptt);
@@ -760,15 +766,26 @@ int main(int argc, char ** argv) {
                 normalize_audio(pcmf32_ptt);
             }
 
+            // Prepend 500ms of silence so Whisper's attention reliably captures
+            // the first word (abrupt speech onset without lead-in causes drops)
+            {
+                const int lead_in_samples = WHISPER_SAMPLE_RATE / 2;  // 500ms
+                std::vector<float> padded(lead_in_samples + pcmf32_ptt.size(), 0.0f);
+                std::copy(pcmf32_ptt.begin(), pcmf32_ptt.end(), padded.begin() + lead_in_samples);
+                pcmf32_ptt = std::move(padded);
+            }
+
             float actual_duration_s = pcmf32_ptt.size() / static_cast<float>(WHISPER_SAMPLE_RATE);
             if (stderr_tty) fprintf(stderr, "\r[Transcribing %.1fs...]        ", actual_duration_s);
 
             // PTT-optimized inference defaults (user overrides preserved)
             whisper_params ptt_params = params;
-            if (ptt_params.beam_size <= 0) ptt_params.beam_size = 1;
-            ptt_params.no_fallback = true;
+            if (ptt_params.beam_size <= 0) ptt_params.beam_size = 5;
+            ptt_params.no_fallback = false;
             ptt_params.no_context = true;
-            if (ptt_params.max_tokens <= 32) ptt_params.max_tokens = 64;
+            // Scale max_tokens to audio duration (~4 tokens/sec speech rate, minimum 128)
+            int estimated_tokens = std::max(128, static_cast<int>(actual_duration_s * 5));
+            ptt_params.max_tokens = std::max(ptt_params.max_tokens, estimated_tokens);
 
             std::vector<BilingualSegment> bilingual_results;
             if (process_audio_segment(ctx, ctx_translate, ptt_params, pcmf32_ptt,

@@ -78,8 +78,14 @@ bool PushToTalkManager::start(int key_code) {
     }
 
     running_.store(true);
+    tap_ready_.store(false);
     tap_thread_ = std::thread(&PushToTalkManager::run_event_loop, this);
-    return true;
+
+    // Wait for the event tap to be fully active (or fail)
+    while (!tap_ready_.load() && running_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return tap_ready_.load();
 }
 
 void PushToTalkManager::stop() {
@@ -185,6 +191,7 @@ void PushToTalkManager::run_event_loop() {
     tap_runloop_ = CFRunLoopGetCurrent();
     CFRunLoopAddSource(tap_runloop_, source, kCFRunLoopCommonModes);
     CGEventTapEnable(event_tap_, true);
+    tap_ready_.store(true);
 
     CFRelease(source);
 

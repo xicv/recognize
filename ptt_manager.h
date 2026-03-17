@@ -33,6 +33,7 @@ public:
 private:
     std::atomic<bool> key_held_{false};
     std::atomic<bool> running_{false};
+    std::atomic<bool> tap_ready_{false};
     std::thread tap_thread_;
 
 #ifdef __APPLE__
