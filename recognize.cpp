@@ -680,6 +680,15 @@ int main(int argc, char ** argv) {
 
     // ─── Push-to-Talk mode ───────────────────────────────────────────────
     if (params.ptt_mode) {
+        // For English input, force transcription mode instead of translation.
+        // Whisper's translate mode with language="en" is untested/unsupported —
+        // the model was trained for X→English, not English→English. Using
+        // translate=true with English audio produces empty segments and degraded
+        // quality (whisper.cpp issues #2065, #2678, #3278).
+        if (params.language == "en" && params.output_mode == "english") {
+            params.output_mode = "original";
+        }
+
         PushToTalkManager ptt;
         int ptt_key_code = PushToTalkManager::key_name_to_code(params.ptt_key);
         if (!ptt.start(ptt_key_code)) {
@@ -838,7 +847,7 @@ int main(int argc, char ** argv) {
             // of longer audio (known issue with encoder-decoder models).
             std::vector<BilingualSegment> bilingual_results;
             const int chunk_samples = WHISPER_SAMPLE_RATE * 15;
-            const int lead_in_samples = WHISPER_SAMPLE_RATE / 2;  // 500ms
+            const int lead_in_samples = WHISPER_SAMPLE_RATE / 5;  // 200ms (shorter to avoid empty-segment issue #2065)
             bool inference_failed = false;
 
             for (size_t offset = 0; offset < pcmf32_ptt.size(); offset += chunk_samples) {
