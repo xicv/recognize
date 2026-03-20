@@ -461,7 +461,7 @@ int main(int argc, char ** argv) {
     // PTT mode needs large buffer for long recordings; standard mode uses length_ms
     int audio_buffer_ms = params.length_ms;
     if (params.ptt_mode) {
-        audio_buffer_ms = std::max(audio_buffer_ms, 300000 + params.ptt_pre_roll_ms);
+        audio_buffer_ms = std::max(audio_buffer_ms, 600000 + params.ptt_pre_roll_ms);
     }
     audio_async audio(audio_buffer_ms);
     int saved_stderr = suppress_stderr();
@@ -796,10 +796,13 @@ int main(int argc, char ** argv) {
                 continue;
             }
 
-            // Include pre-roll for onset consonants, cap at buffer capacity
-            int total_ms = std::min(duration_ms + params.ptt_pre_roll_ms, audio_buffer_ms);
+            // Include pre-roll + lead-in as real audio from the circular buffer.
+            // Using real ambient audio instead of synthetic zeros avoids whisper's
+            // no-speech detection (trained on trailing silence, not leading zeros).
+            const int lead_in_ms = 200;
+            int total_ms = std::min(duration_ms + params.ptt_pre_roll_ms + lead_in_ms, audio_buffer_ms);
 
-            if (stderr_tty && duration_ms + params.ptt_pre_roll_ms > audio_buffer_ms) {
+            if (stderr_tty && duration_ms + params.ptt_pre_roll_ms + lead_in_ms > audio_buffer_ms) {
                 fprintf(stderr, "\r[Warning: held %.0fs but buffer holds %.0fs — beginning truncated]\n",
                         duration_ms / 1000.0, audio_buffer_ms / 1000.0);
             }
@@ -841,13 +844,17 @@ int main(int argc, char ** argv) {
             ptt_params.no_fallback = true;
             ptt_params.no_context = true;
             ptt_params.max_tokens = 256;
+            // PTT guarantees speech (user holds a button), so relax no-speech
+            // detection to prevent whisper from skipping onset segments.
+            ptt_params.no_speech_thold = 0.9f;
 
-            // Process audio in ≤15-second chunks with silence lead-in per chunk.
-            // Shorter chunks prevent whisper's attention from losing the beginning
-            // of longer audio (known issue with encoder-decoder models).
+            // Process audio in ≤15-second chunks. The first chunk already has
+            // real ambient audio as lead-in (from extended audio.get above).
+            // Subsequent chunks use overlap from the previous chunk's tail,
+            // matching whisper.cpp's keep_ms streaming pattern.
             std::vector<BilingualSegment> bilingual_results;
             const int chunk_samples = WHISPER_SAMPLE_RATE * 15;
-            const int lead_in_samples = WHISPER_SAMPLE_RATE / 5;  // 200ms (shorter to avoid empty-segment issue #2065)
+            const int overlap_samples = WHISPER_SAMPLE_RATE / 5;  // 200ms overlap between chunks
             bool inference_failed = false;
 
             for (size_t offset = 0; offset < pcmf32_ptt.size(); offset += chunk_samples) {
@@ -860,11 +867,21 @@ int main(int argc, char ** argv) {
                     chunk_size = remaining;
                 }
 
-                // Extract chunk and prepend 500ms silence lead-in
-                std::vector<float> chunk(lead_in_samples + chunk_size, 0.0f);
-                std::copy(pcmf32_ptt.begin() + offset,
-                          pcmf32_ptt.begin() + offset + chunk_size,
-                          chunk.begin() + lead_in_samples);
+                std::vector<float> chunk;
+                if (offset == 0) {
+                    // First chunk: real audio already includes lead-in from
+                    // the extended audio.get() — no synthetic silence needed.
+                    chunk.assign(pcmf32_ptt.begin(),
+                                 pcmf32_ptt.begin() + chunk_size);
+                } else {
+                    // Subsequent chunks: prepend overlap from previous chunk's
+                    // tail for acoustic continuity (real audio, not zeros).
+                    size_t overlap = std::min(static_cast<size_t>(overlap_samples), offset);
+                    chunk.resize(overlap + chunk_size);
+                    std::copy(pcmf32_ptt.begin() + offset - overlap,
+                              pcmf32_ptt.begin() + offset + chunk_size,
+                              chunk.begin());
+                }
 
                 if (stderr_tty && offset > 0) {
                     fprintf(stderr, "\r[Transcribing %.1fs... chunk %zu/%zu]        ",

@@ -105,6 +105,8 @@ The build copies the binary from `build/recognize` to `./recognize` in the sourc
 - **Pipe-friendly output**: When stdout is not a TTY, all informational messages (model loading, auto-copy, export, meeting status) go to stderr. Streaming display uses dual-buffer (finalized + current group) to output only clean finalized text on exit. No ANSI codes in pipe mode.
 - **Silence timeout**: `--silence-timeout N` auto-stops recording after N seconds of no speech. Uses `vad_simple()` on raw new audio samples (not inference results — the sliding window would always produce text from old audio). Only triggers after first speech detected (prevents premature exit during warmup). Uses `is_running = false` for graceful exit (same path as SDL quit). Automatically disabled in meeting mode. Checked in both VAD and non-VAD paths.
 - **Hallucination filtering**: Removes known phantom phrases (silence markers, typing/keyboard sounds, "Thank you for watching", URLs, CJK equivalents). Case-insensitive matching. Also deduplicates consecutive identical sentences.
+- **PTT real-audio lead-in**: Instead of prepending synthetic zeros (which trigger whisper's no-speech detection — the model was trained with silence as trailing padding, not leading), PTT mode captures extra real ambient audio from the circular buffer as lead-in. Subsequent chunks use 200ms overlap from the previous chunk's tail (matching whisper.cpp's `keep_ms` streaming pattern). `no_speech_thold` is raised to 0.9 for PTT since the user is always holding a button to speak.
+- **PTT buffer capacity**: 10 minutes (600s) circular buffer for long PTT recordings.
 
 ### Claude Code Voice Integration
 

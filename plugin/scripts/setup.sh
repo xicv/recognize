@@ -22,9 +22,11 @@ fi
 mkdir -p "$RECOGNIZE_DIR/models" "$RECOGNIZE_DIR/tmp"
 mkdir -p "$COMMANDS_DIR"
 
-# Install launcher script
+# Install scripts
 cp "$SCRIPT_DIR/claude-launch.sh" "$RECOGNIZE_DIR/claude-launch.sh"
-chmod +x "$RECOGNIZE_DIR/claude-launch.sh"
+cp "$SCRIPT_DIR/claude-stop.sh" "$RECOGNIZE_DIR/claude-stop.sh"
+cp "$SCRIPT_DIR/asr-correction.md" "$RECOGNIZE_DIR/asr-correction.md"
+chmod +x "$RECOGNIZE_DIR/claude-launch.sh" "$RECOGNIZE_DIR/claude-stop.sh"
 
 # Install short aliases to ~/.claude/commands/ for non-plugin users
 # These work without the plugin installed, invoking the skills directly

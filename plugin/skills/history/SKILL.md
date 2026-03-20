@@ -25,6 +25,14 @@ recognize history search "$ARGUMENTS" --json --limit 10
 
 Present results in a readable table format with timestamp, mode, and full text.
 
+**If $ARGUMENTS starts with `act` followed by a number (e.g. `act 12`):** Retrieve the transcript, apply ASR Error Correction, then **treat the corrected text as the user's message**. Respond to it directly as an instruction or question. Do NOT show the raw or corrected transcript separately — just act on it.
+
+```bash
+recognize history show "<ID>"
+```
+
+!`cat ~/.recognize/asr-correction.md`
+
 **If $ARGUMENTS is a number (ID):** Show the full transcript:
 
 ```bash

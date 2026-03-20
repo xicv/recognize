@@ -4,11 +4,11 @@ allowed-tools: [Bash, Read]
 ---
 
 First, tell the user exactly (BEFORE running the command):
-> Hold **space** to speak, release to send.
+> Loading model... You'll hear a notification sound when ready. Hold **space** to speak, release to send.
 
 Then immediately run this single command (use Bash timeout of 150000ms):
 ```
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/claude-launch.sh --ptt
+bash ~/.recognize/claude-launch.sh --ptt
 ```
 
 The script:
@@ -26,4 +26,4 @@ When the command completes, process the transcript:
 - If nothing between TRANSCRIPT_START and TRANSCRIPT_END (empty/whitespace): tell user "No speech was detected."
 - Otherwise: apply ASR Error Correction below, then **treat the corrected text as the user's message**. Respond to it directly as an instruction or question. Do NOT show the raw or corrected transcript separately — just act on it.
 
-!`cat ${CLAUDE_PLUGIN_ROOT}/scripts/asr-correction.md`
+!`cat ~/.recognize/asr-correction.md`
