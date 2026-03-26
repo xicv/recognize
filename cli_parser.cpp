@@ -108,6 +108,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "--silence-timeout")                  { if (!require_arg(i, arg)) return false; params.silence_timeout = std::stof(argv[++i]); }
         // Push-to-talk options
         else if (arg == "--ptt")                              { params.ptt_mode = true; }
+        else if (arg == "--ptt-loop")                         { params.ptt_mode = true; params.ptt_loop = true; }
         else if (arg == "--ptt-key")                          { if (!require_arg(i, arg)) return false; params.ptt_key = argv[++i]; }
         else if (arg == "--ptt-pre-roll")                     { if (!require_arg(i, arg)) return false; params.ptt_pre_roll_ms = std::stoi(argv[++i]); }
         // Refinement
@@ -257,6 +258,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "\n");
     fprintf(stderr, "push-to-talk:\n");
     fprintf(stderr, "            --ptt              [%-7s] enable push-to-talk mode (hold key to record)\n", params.ptt_mode ? "true" : "false");
+    fprintf(stderr, "            --ptt-loop         [%-7s] keep running after transcription (daemon mode)\n", params.ptt_loop ? "true" : "false");
     fprintf(stderr, "            --ptt-key KEY      [%-7s] PTT key: space, right_option, right_ctrl, fn, f13\n", params.ptt_key.c_str());
     fprintf(stderr, "            --ptt-pre-roll N   [%-7d] pre-roll audio in ms before key press\n", params.ptt_pre_roll_ms);
     fprintf(stderr, "\n");

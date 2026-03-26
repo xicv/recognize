@@ -87,6 +87,7 @@ struct whisper_params {
 
     // Push-to-talk settings
     bool ptt_mode = false;
+    bool ptt_loop = false;           // Keep running after transcription (daemon mode for instant re-use)
     std::string ptt_key = "space";   // User-friendly key name
     int32_t ptt_pre_roll_ms = 300;  // Capture audio from before key press (catches onset consonants)
 

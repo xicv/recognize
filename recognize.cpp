@@ -21,6 +21,7 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 #include <iostream>
 #include <sstream>
@@ -710,11 +711,28 @@ int main(int argc, char ** argv) {
         std::string ptt_pipe_text;
         const bool stderr_tty = isatty(STDERR_FILENO);
 
-        // PTT: single-shot — record once, transcribe, exit (no quit confirmation)
+        // PTT loop — in single-shot mode, exits after first transcription.
+        // In daemon mode (--ptt-loop), loops back to wait for next key press
+        // with a 10-minute inactivity timeout to prevent orphaned daemons.
+        auto t_last_activity = std::chrono::high_resolution_clock::now();
+        const int daemon_timeout_ms = 600000; // 10 minutes
+
         while (is_running_ptt && !g_interrupt_received.load()) {
-            // Wait for key press
+            // Wait for key press (with inactivity timeout in daemon mode)
             while (!ptt.is_key_held() && is_running_ptt && !g_interrupt_received.load()) {
                 is_running_ptt = sdl_poll_events();
+
+                if (params.ptt_loop) {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    int idle_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - t_last_activity).count());
+                    if (idle_ms > daemon_timeout_ms) {
+                        fprintf(stderr, "PTT daemon idle timeout (10min), exiting\n");
+                        is_running_ptt = false;
+                        break;
+                    }
+                }
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             if (!is_running_ptt || g_interrupt_received.load()) break;
@@ -960,33 +978,84 @@ int main(int argc, char ** argv) {
                 fflush(stdout);
             }
 
+            if (params.ptt_loop) {
+                // Loop mode: dump transcript immediately, save history, signal done, continue
+                if (!stdout_is_tty && !ptt_pipe_text.empty()) {
+                    // Truncate and rewind stdout (redirected to file by launcher)
+                    // so each iteration overwrites rather than appending.
+                    // Uses raw fd ops after flushing stdio buffers — safe because
+                    // stdio has no cached position after fflush.
+                    fflush(stdout);
+                    if (lseek(STDOUT_FILENO, 0, SEEK_SET) != -1) {
+                        if (ftruncate(STDOUT_FILENO, 0) != 0) {
+                            fprintf(stderr, "warning: ftruncate failed, output may be concatenated\n");
+                        }
+                    }
+                    printf("%s\n", ptt_pipe_text.c_str());
+                    fflush(stdout);
+                }
+
+                // Save to history per-iteration
+                std::string iter_text = stdout_is_tty
+                    ? auto_copy_session.transcription_buffer.str()
+                    : ptt_pipe_text;
+                if (params.history_enabled && !iter_text.empty()) {
+                    HistoryManager history;
+                    if (history.open()) {
+                        auto now = std::chrono::high_resolution_clock::now();
+                        double duration_s = std::chrono::duration<double>(now - t_press).count();
+                        history.save(iter_text, duration_s, params.model, "ptt");
+                    }
+                }
+
+                // Clear state for next iteration
+                ptt_pipe_text.clear();
+                auto_copy_session.transcription_buffer.str("");
+                auto_copy_session.transcription_buffer.clear();
+                export_session.segments.clear();
+                speaker_tracker.current_id = 0;
+                speaker_tracker.total_speakers = 0;
+                t_last_activity = std::chrono::high_resolution_clock::now();
+
+                // Signal completion and readiness for next key press
+                fprintf(stderr, "TRANSCRIPT_DONE\n");
+                fprintf(stderr, "PTT_WAITING\n");
+                if (stderr_tty) {
+                    fprintf(stderr, "[Ready — hold %s to record, release to transcribe]\n",
+                            params.ptt_key.c_str());
+                }
+                fflush(stderr);
+                continue;
+            }
+
             // Single-shot: exit after first successful transcription
             break;
         }
 
         ptt.stop();
 
-        // Dump accumulated text in pipe mode
-        if (!stdout_is_tty && !ptt_pipe_text.empty()) {
+        // Dump accumulated text in pipe mode (single-shot only; loop mode dumps per-iteration)
+        if (!params.ptt_loop && !stdout_is_tty && !ptt_pipe_text.empty()) {
             printf("%s\n", ptt_pipe_text.c_str());
             fflush(stdout);
         }
 
         audio.pause();
 
-        // Gather final transcript text for history
-        std::string history_text;
-        if (params.meeting_mode) {
-            history_text = meeting_session.get_transcription();
-        } else if (!stdout_is_tty) {
-            history_text = ptt_pipe_text;
-        } else {
-            history_text = auto_copy_session.transcription_buffer.str();
-        }
+        // Gather final transcript text for history (single-shot only; loop mode saves per-iteration)
+        if (!params.ptt_loop) {
+            std::string history_text;
+            if (params.meeting_mode) {
+                history_text = meeting_session.get_transcription();
+            } else if (!stdout_is_tty) {
+                history_text = ptt_pipe_text;
+            } else {
+                history_text = auto_copy_session.transcription_buffer.str();
+            }
 
-        // Finalize session
-        finalize_session(params, auto_copy_session, export_session, speaker_tracker,
-                         meeting_session, meeting_output_file, history_text, auto_copy_session.start_time);
+            finalize_session(params, auto_copy_session, export_session, speaker_tracker,
+                             meeting_session, meeting_output_file, history_text, auto_copy_session.start_time);
+        }
 
         g_is_recording.store(false);
         whisper_free(ctx);

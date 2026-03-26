@@ -107,6 +107,7 @@ The build copies the binary from `build/recognize` to `./recognize` in the sourc
 - **Hallucination filtering**: Removes known phantom phrases (silence markers, typing/keyboard sounds, "Thank you for watching", URLs, CJK equivalents). Case-insensitive matching. Also deduplicates consecutive identical sentences.
 - **PTT real-audio lead-in**: Instead of prepending synthetic zeros (which trigger whisper's no-speech detection — the model was trained with silence as trailing padding, not leading), PTT mode captures extra real ambient audio from the circular buffer as lead-in. Subsequent chunks use 200ms overlap from the previous chunk's tail (matching whisper.cpp's `keep_ms` streaming pattern). `no_speech_thold` is raised to 0.9 for PTT since the user is always holding a button to speak.
 - **PTT buffer capacity**: 10 minutes (600s) circular buffer for long PTT recordings.
+- **PTT daemon mode**: `--ptt-loop` keeps the process alive after transcription, waiting for the next key press. The launcher detects a warm daemon (PID alive + `PTT_READY` in log) and reuses it — subsequent `/rp` calls start instantly (0s) instead of reloading the 1.5GB model. State is fully reset between iterations (segments, speaker tracker, pipe buffers). Stdout is truncated via `ftruncate`/`lseek` so each transcript overwrites the file. Signals `TRANSCRIPT_DONE` + `PTT_WAITING` on stderr for launcher synchronization. 10-minute inactivity timeout prevents orphaned daemons.
 
 ### Claude Code Voice Integration
 

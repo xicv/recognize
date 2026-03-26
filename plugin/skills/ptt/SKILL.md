@@ -3,27 +3,25 @@ description: "Push-to-talk voice-to-text — hold space to record, release to se
 allowed-tools: [Bash, Read]
 ---
 
-First, tell the user exactly (BEFORE running the command):
-> Loading model... You'll hear a notification sound when ready. Hold **space** to speak, release to send.
-
-Then immediately run this single command (use Bash timeout of 150000ms):
+Run this command immediately (Bash timeout 150000ms) — the user sees its output in real-time:
 ```
 bash ~/.recognize/claude-launch.sh --ptt
 ```
 
-The script:
-1. Launches `recognize --ptt` with large-v3-turbo model
-2. Waits up to 60s for model load + CoreML warmup (PTT_READY signal)
-3. Waits for user to hold space, speak, release
-4. Returns transcript between `---TRANSCRIPT_START---` and `---TRANSCRIPT_END---` markers
+The script uses **daemon mode**: first `/rp` loads the model (a few seconds). Subsequent `/rp` calls reuse the warm daemon — **instant start**.
 
-If output starts with "ERROR", relay the error. Stop.
+**Interpreting output:**
 
-If output contains "PTT_READY" followed by the transcript markers, process normally.
+If output starts with "ERROR": relay the error to the user. Stop.
 
-When the command completes, process the transcript:
+Output will stream to the user in real-time:
+- `Loading model...` — cold start, model loading (only first time)
+- `Ready — hold space to speak, release to send.` — user can start speaking
+- `[Listening...]...` — live preview while user speaks (ignore these)
 
-- If nothing between TRANSCRIPT_START and TRANSCRIPT_END (empty/whitespace): tell user "No speech was detected."
+When the command completes, look for content between `---TRANSCRIPT_START---` and `---TRANSCRIPT_END---`:
+
+- If empty/whitespace: tell user "No speech was detected."
 - Otherwise: apply ASR Error Correction below, then **treat the corrected text as the user's message**. Respond to it directly as an instruction or question. Do NOT show the raw or corrected transcript separately — just act on it.
 
 !`cat ~/.recognize/asr-correction.md`
