@@ -1,41 +1,23 @@
 class Recognize < Formula
   desc "Real-time speech recognition with CoreML acceleration for macOS"
-  homepage "https://github.com/anthropic-xi/recogniz.ing"
-  url "https://github.com/anthropic-xi/recogniz.ing/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "PLACEHOLDER"
+  homepage "https://github.com/xicv/recognize"
+  version "2.2.0"
   license "MIT"
 
-  depends_on "cmake" => :build
-  depends_on "sdl2"
+  on_arm do
+    url "https://github.com/xicv/recognize/releases/download/v2.2.0/recognize-2.2.0-arm64-v2.tar.gz"
+    sha256 "a26ceb54a64ea4811f6a2da27feb191dd1f4f77d72d1aaabc503cf2f2c78a483"
+  end
+
   depends_on :macos
+  depends_on "sdl2"
 
   def install
-    cd "src/cli" do
-      # Initialize whisper.cpp submodule
-      system "git", "submodule", "update", "--init", "--recursive", "../../fixtures/whisper.cpp" rescue nil
-
-      # Build with CoreML and Metal acceleration
-      mkdir "build" do
-        system "cmake", "..",
-               "-DWHISPER_COREML=ON",
-               "-DWHISPER_COREML_ALLOW_FALLBACK=ON",
-               "-DGGML_METAL=ON",
-               "-DGGML_METAL_EMBED_LIBRARY=ON",
-               "-DGGML_NATIVE=ON",
-               "-DGGML_ACCELERATE=ON",
-               "-DGGML_BLAS=ON",
-               "-DWHISPER_SDL2=ON",
-               *std_cmake_args
-        system "make", "-j#{ENV.make_jobs}"
-      end
-
-      bin.install "build/recognize"
-    end
+    bin.install "bin/recognize"
+    lib.install Dir["lib/*.dylib"]
   end
 
   def post_install
-    # Create config directory
-    (var/"recognize").mkpath rescue nil
     system "mkdir", "-p", "#{ENV["HOME"]}/.recognize/models", "#{ENV["HOME"]}/.recognize/tmp"
   end
 
