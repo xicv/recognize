@@ -47,21 +47,65 @@ jobs:
         working-directory: src/cli
         run: ./build/recognize --help
 
-      - name: Package
+      - name: Package with dylibs
         working-directory: src/cli
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          mkdir -p release
-          cp build/recognize release/
+          STAGE="release/stage"
+          mkdir -p "$STAGE/bin" "$STAGE/lib"
+
+          # Copy binary
+          cp build/recognize "$STAGE/bin/"
+
+          # Copy dylibs (use latest version of each)
+          cp build/whisper.cpp/src/libwhisper.coreml.dylib "$STAGE/lib/"
+          for lib in libwhisper libggml libggml-base libggml-cpu libggml-blas libggml-metal; do
+            # Find the highest-versioned real file (not symlink)
+            LATEST=$(ls -1 build/whisper.cpp/src/${lib}.*.dylib build/whisper.cpp/ggml/src/${lib}.*.dylib build/whisper.cpp/ggml/src/*/${lib}.*.dylib 2>/dev/null | grep -v '^.*->.*$' | sort -V | tail -1)
+            if [ -n "$LATEST" ] && [ -f "$LATEST" ]; then
+              # Derive the short name (e.g., libwhisper.1.dylib, libggml.0.dylib)
+              BASENAME=$(basename "$LATEST")
+              # Keep major version only: libwhisper.1.8.4.dylib -> libwhisper.1.dylib
+              SHORT=$(echo "$BASENAME" | sed -E 's/^(lib[^.]+\.[0-9]+)\..*/\1.dylib/')
+              cp "$LATEST" "$STAGE/lib/$SHORT"
+            fi
+          done
+
+          # Add rpath so binary finds dylibs in ../lib
+          install_name_tool -add_rpath @executable_path/../lib "$STAGE/bin/recognize"
+
+          # Fix dylib install names and add loader-relative rpath
+          for lib in "$STAGE/lib/"*.dylib; do
+            name=$(basename "$lib")
+            install_name_tool -id "@rpath/$name" "$lib" 2>/dev/null || true
+            install_name_tool -add_rpath @loader_path "$lib" 2>/dev/null || true
+          done
+
+          # Re-sign everything (macOS requires valid signatures)
+          codesign -fs - "$STAGE/bin/recognize"
+          for lib in "$STAGE/lib/"*.dylib; do
+            codesign -fs - "$lib"
+          done
+
+          # Verify it runs
+          "$STAGE/bin/recognize" --help
+
+          # Create tarball
           cd release
-          tar czf "recognize-${TAG}-${{ matrix.arch }}.tar.gz" recognize
-          shasum -a 256 *.tar.gz > "checksums-${{ matrix.arch }}.txt"
+          tar czf "recognize-${TAG}-${{ matrix.arch }}.tar.gz" -C stage .
+          shasum -a 256 "recognize-${TAG}-${{ matrix.arch }}.tar.gz" > "checksums-${{ matrix.arch }}.txt"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.arch }}
-          path: src/cli/release/*
+          path: src/cli/release/*.tar.gz
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums-${{ matrix.arch }}
+          path: src/cli/release/checksums-*.txt
 
   create-release:
     needs: build
@@ -74,27 +118,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create universal binary
+      - name: Collect checksums
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-
-          # Extract binaries
-          mkdir -p arm64 x86_64
-          tar xzf "artifacts/release-arm64/recognize-${TAG}-arm64.tar.gz" -C arm64
-          tar xzf "artifacts/release-x86_64/recognize-${TAG}-x86_64.tar.gz" -C x86_64
-
-          # Create universal binary
-          lipo -create arm64/recognize x86_64/recognize -output recognize-universal
-          mkdir -p universal
-          cp recognize-universal universal/recognize
-          cd universal
-          tar czf "recognize-${TAG}-universal.tar.gz" recognize
-          cd ..
-
-          # Collect all checksums
-          cat artifacts/release-arm64/checksums-arm64.txt > checksums.txt
-          cat artifacts/release-x86_64/checksums-x86_64.txt >> checksums.txt
-          shasum -a 256 "universal/recognize-${TAG}-universal.tar.gz" >> checksums.txt
+          cat artifacts/checksums-arm64/checksums-arm64.txt > checksums.txt
+          cat artifacts/checksums-x86_64/checksums-x86_64.txt >> checksums.txt
+          cat checksums.txt
 
       - name: Bundle plugin
         run: |
@@ -111,7 +139,72 @@ jobs:
             --generate-notes \
             "artifacts/release-arm64/recognize-${TAG}-arm64.tar.gz" \
             "artifacts/release-x86_64/recognize-${TAG}-x86_64.tar.gz" \
-            "universal/recognize-${TAG}-universal.tar.gz" \
             "recognize-voice-plugin-${TAG}.tar.gz" \
             checksums.txt \
             src/cli/install.sh
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          # Skip if no tap token configured
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set, skipping formula update"
+            exit 0
+          fi
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+
+          # Get SHA256 for each architecture
+          SHA_ARM64=$(grep "arm64" checksums.txt | awk '{print $1}')
+          SHA_X86=$(grep "x86_64" checksums.txt | awk '{print $1}')
+
+          # Clone tap repo
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/xicv/homebrew-tap.git" /tmp/homebrew-tap
+          cd /tmp/homebrew-tap
+
+          # Generate formula
+          cat > Formula/recognize.rb << FORMULA
+          class Recognize < Formula
+            desc "Real-time speech recognition with CoreML acceleration for macOS"
+            homepage "https://github.com/xicv/recognize"
+            version "${VERSION}"
+            license "MIT"
+
+            on_arm do
+              url "https://github.com/xicv/recognize/releases/download/${TAG}/recognize-${TAG}-arm64.tar.gz"
+              sha256 "${SHA_ARM64}"
+            end
+
+            on_intel do
+              url "https://github.com/xicv/recognize/releases/download/${TAG}/recognize-${TAG}-x86_64.tar.gz"
+              sha256 "${SHA_X86}"
+            end
+
+            depends_on :macos
+            depends_on "sdl2"
+
+            def install
+              bin.install "bin/recognize"
+              lib.install Dir["lib/*.dylib"]
+            end
+
+            def post_install
+              system "mkdir", "-p", "#{ENV["HOME"]}/.recognize/models", "#{ENV["HOME"]}/.recognize/tmp"
+            end
+
+            test do
+              assert_match "usage:", shell_output("#{bin}/recognize --help 2>&1", 0)
+            end
+          end
+          FORMULA
+
+          # Fix indentation (heredoc adds leading spaces)
+          sed -i '' 's/^          //' Formula/recognize.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/recognize.rb
+          git commit -m "Update recognize to ${VERSION}"
+          git push origin main
