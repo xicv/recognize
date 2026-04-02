@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <csignal>
 #include <atomic>
+#include <future>
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -439,6 +440,22 @@ int main(int argc, char ** argv) {
         }
     }
 
+    // PTT keyterm boosting: bias Whisper's decoder toward coding vocabulary.
+    // Inspired by Claude Code's Deepgram keyterm boosting — Whisper's initial_prompt
+    // conditions the decoder to favor these tokens, reducing misrecognition of
+    // technical terms (e.g., "MCP" not "NCP", "CLI" not "see a lie").
+    if (params.ptt_mode && params.initial_prompt.empty()) {
+        params.initial_prompt =
+            "CLI, API, SDK, MCP, OAuth, gRPC, WebSocket, TypeScript, JavaScript, "
+            "React, Node.js, npm, pnpm, GitHub, Git, SSH, HTTPS, REST, GraphQL, "
+            "JSON, YAML, TOML, regex, grep, curl, wget, Docker, Kubernetes, "
+            "localhost, stderr, stdout, stdin, async, await, const, enum, struct, "
+            "Rust, Python, Go, Swift, Homebrew, CoreML, whisper, Claude, Anthropic, "
+            "Makefile, CMake, Dockerfile, symlink, sudo, chmod, Vim, Neovim, "
+            "refactor, deploy, commit, merge, rebase, upstream, downstream, "
+            "latency, throughput, endpoint, middleware, webhook, microservice.";
+    }
+
     params.keep_ms   = std::min(params.keep_ms,   params.step_ms);
     params.length_ms = std::max(params.length_ms, params.step_ms);
 
@@ -739,64 +756,113 @@ int main(int argc, char ** argv) {
 
             // Key pressed — start capture
             auto t_press = std::chrono::high_resolution_clock::now();
+            auto t_last_level = t_press;
             if (stderr_tty) fprintf(stderr, "\r[Recording...] ");
 
-            // Capture while key is held, with periodic streaming preview
+            // Capture while key is held, with non-blocking async preview.
+            // Preview inference runs on std::async so key-release is detected
+            // immediately — no more multi-second jank from blocking inference.
             auto t_last_preview = t_press;
             std::string last_preview_text;
+            std::future<std::string> preview_future;
+            bool preview_running = false;
 
-            while (ptt.is_key_held() && is_running_ptt && !g_interrupt_received.load()) {
+            while (is_running_ptt && !g_interrupt_received.load()) {
                 is_running_ptt = sdl_poll_events();
+                bool key_held = ptt.is_key_held();
 
                 auto now = std::chrono::high_resolution_clock::now();
                 int elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_press).count());
-                int since_preview = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_last_preview).count());
 
-                // Run streaming preview every 3s, starting after 2s of recording
-                if (elapsed_ms >= 2000 && since_preview >= 3000) {
+                // Check if async preview completed
+                if (preview_running && preview_future.valid() &&
+                    preview_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    preview_running = false;
+                    std::string preview_text = preview_future.get();
+
+                    if (!preview_text.empty() && preview_text != last_preview_text) {
+                        std::string display = preview_text;
+                        if (display.size() > 80) {
+                            display = "..." + display.substr(display.size() - 77);
+                        }
+                        if (stderr_tty) {
+                            fprintf(stderr, "\r\033[2K[%ds]%s", elapsed_ms / 1000, display.c_str());
+                        }
+                        fprintf(stderr, "\n[PREVIEW %ds]%s\n", elapsed_ms / 1000, display.c_str());
+                        fflush(stderr);
+                        last_preview_text = preview_text;
+                    }
+                    if (stderr_tty && key_held) fprintf(stderr, "\r[Recording...] ");
+                }
+
+                // Key released — break out (wait for in-flight preview first)
+                if (!key_held) {
+                    if (preview_running && preview_future.valid()) {
+                        if (stderr_tty) fprintf(stderr, "\r\033[2K[Finishing preview...]");
+                        preview_future.wait();
+                        preview_running = false;
+                    }
+                    break;
+                }
+
+                // Launch new async preview every 3s, starting after 2s of recording
+                int since_preview = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_last_preview).count());
+                if (!preview_running && elapsed_ms >= 2000 && since_preview >= 3000) {
                     t_last_preview = now;
 
-                    // Grab recent audio (up to 28s for single whisper window)
                     int preview_ms = std::min(elapsed_ms + params.ptt_pre_roll_ms, 28000);
                     std::vector<float> preview_audio;
                     audio.get(preview_ms, preview_audio);
 
                     if (params.normalize_audio) normalize_audio(preview_audio);
 
-                    whisper_params preview_params = params;
-                    preview_params.beam_size = 1;
-                    preview_params.no_fallback = true;
-                    preview_params.no_context = true;
-                    preview_params.max_tokens = 128;
+                    // Capture parameters by value for the async task.
+                    // ctx is safe: only one whisper_full() runs at a time because
+                    // we don't launch a new preview while one is in-flight.
+                    whisper_params pp = params;
+                    pp.beam_size = 1;
+                    pp.no_fallback = true;
+                    pp.no_context = true;
+                    pp.max_tokens = 128;
 
-                    std::vector<BilingualSegment> preview_results;
-                    if (process_audio_segment(ctx, nullptr, preview_params, preview_audio,
-                                              preview_results, prompt_tokens) == 0) {
-                        std::string preview_text;
-                        for (const auto& seg : preview_results) {
-                            if (!seg.original_text.empty())
-                                preview_text += seg.original_text;
-                            else if (!seg.english_text.empty())
-                                preview_text += seg.english_text;
-                        }
-                        preview_text = filter_hallucinations(preview_text);
+                    preview_future = std::async(std::launch::async,
+                        [ctx, pp, preview_audio = std::move(preview_audio), &prompt_tokens]() -> std::string {
+                            std::vector<BilingualSegment> results;
+                            if (process_audio_segment(ctx, nullptr, pp, preview_audio,
+                                                      results, prompt_tokens) != 0) {
+                                return "";
+                            }
+                            std::string text;
+                            for (const auto& seg : results) {
+                                if (!seg.original_text.empty()) text += seg.original_text;
+                                else if (!seg.english_text.empty()) text += seg.english_text;
+                            }
+                            return filter_hallucinations(text);
+                        });
+                    preview_running = true;
+                }
 
-                        if (!preview_text.empty() && preview_text != last_preview_text) {
-                            // Show short tail (~80 chars) with duration indicator
-                            std::string display = preview_text;
-                            if (display.size() > 80) {
-                                display = "..." + display.substr(display.size() - 77);
-                            }
-                            if (stderr_tty) {
-                                fprintf(stderr, "\r\033[2K[%ds]%s", elapsed_ms / 1000, display.c_str());
-                            }
-                            fprintf(stderr, "\n[PREVIEW %ds]%s\n", elapsed_ms / 1000, display.c_str());
-                            fflush(stderr);
-                            last_preview_text = preview_text;
-                        }
+                // Audio level visualization: update every 150ms on TTY
+                int since_level = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_last_level).count());
+                if (stderr_tty && !preview_running && since_level >= 150) {
+                    t_last_level = now;
+                    // Compute RMS of last 100ms of audio
+                    std::vector<float> level_audio;
+                    audio.get(100, level_audio);
+                    if (!level_audio.empty()) {
+                        float sum_sq = 0.0f;
+                        for (const float s : level_audio) sum_sq += s * s;
+                        float rms = std::sqrt(sum_sq / level_audio.size());
+                        // Normalize to 0-1 via sqrt curve for perceptual evenness
+                        float level = std::sqrt(std::min(rms / 0.05f, 1.0f));
+                        // Map to 8-bar display using block elements
+                        static const char* bars[] = {"▁","▂","▃","▄","▅","▆","▇","█"};
+                        int bar_idx = static_cast<int>(level * 7.99f);
+                        bar_idx = std::max(0, std::min(7, bar_idx));
+                        fprintf(stderr, "\r\033[2K[Recording %ds %s%s%s] ",
+                                elapsed_ms / 1000, bars[std::max(0, bar_idx-1)], bars[bar_idx], bars[std::max(0, bar_idx-1)]);
+                        fflush(stderr);
                     }
-
-                    if (stderr_tty) fprintf(stderr, "\r[Recording...] ");
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -934,6 +1000,57 @@ int main(int argc, char ** argv) {
                     }),
                 bilingual_results.end());
 
+            // Silent-drop detection: audio had signal but transcript is empty.
+            // Retry once with relaxed no_speech_thold (inspired by Claude Code's
+            // silent-drop recovery that replays audio on a fresh connection).
+            if (bilingual_results.empty() && !pcmf32_ptt.empty()) {
+                float audio_rms = 0.0f;
+                for (const float s : pcmf32_ptt) audio_rms += s * s;
+                audio_rms = std::sqrt(audio_rms / pcmf32_ptt.size());
+
+                if (audio_rms > 0.005f) {
+                    // Audio had signal but whisper returned nothing — retry with relaxed params
+                    if (stderr_tty) fprintf(stderr, "\r[Silent drop detected, retrying...]       ");
+
+                    whisper_params retry_params = ptt_params;
+                    retry_params.no_speech_thold = 0.99f;   // Almost disable no-speech filter
+                    retry_params.entropy_thold = 3.0f;      // More permissive entropy
+                    retry_params.max_tokens = 512;           // Allow more output
+
+                    for (size_t offset = 0; offset < pcmf32_ptt.size(); offset += chunk_samples) {
+                        size_t remaining = pcmf32_ptt.size() - offset;
+                        size_t chunk_size = std::min(remaining, static_cast<size_t>(chunk_samples));
+                        if (remaining > static_cast<size_t>(chunk_samples) &&
+                            remaining < static_cast<size_t>(chunk_samples + WHISPER_SAMPLE_RATE * 2)) {
+                            chunk_size = remaining;
+                        }
+                        std::vector<float> chunk(pcmf32_ptt.begin() + offset,
+                                                  pcmf32_ptt.begin() + offset + chunk_size);
+                        std::vector<BilingualSegment> retry_results;
+                        if (process_audio_segment(ctx, ctx_translate, retry_params, chunk,
+                                                  retry_results, prompt_tokens) == 0) {
+                            for (auto& seg : retry_results) {
+                                if (!seg.original_text.empty())
+                                    seg.original_text = filter_hallucinations(seg.original_text);
+                                if (!seg.english_text.empty())
+                                    seg.english_text = filter_hallucinations(seg.english_text);
+                            }
+                            retry_results.erase(
+                                std::remove_if(retry_results.begin(), retry_results.end(),
+                                    [](const BilingualSegment& s) {
+                                        return s.original_text.empty() && s.english_text.empty();
+                                    }),
+                                retry_results.end());
+                            bilingual_results.insert(bilingual_results.end(),
+                                                     retry_results.begin(), retry_results.end());
+                        }
+                    }
+                    if (bilingual_results.empty() && stderr_tty) {
+                        fprintf(stderr, "\r[Warning: speech detected but transcription empty]\n");
+                    }
+                }
+            }
+
             // Refine via Claude if enabled
             if (params.refine && !bilingual_results.empty()) {
                 // Concatenate raw text for refinement
@@ -1017,7 +1134,16 @@ int main(int argc, char ** argv) {
                 speaker_tracker.total_speakers = 0;
                 t_last_activity = std::chrono::high_resolution_clock::now();
 
-                // Signal completion and readiness for next key press
+                // Signal completion via file + stderr for launcher detection.
+                // File signal is checked first (fast path, no log grep needed).
+                {
+                    std::string done_path = std::string(getenv("HOME") ? getenv("HOME") : "") +
+                                            "/.recognize/claude-session.done";
+                    if (!done_path.empty()) {
+                        std::ofstream done_file(done_path);
+                        if (done_file.is_open()) done_file << "1\n";
+                    }
+                }
                 fprintf(stderr, "TRANSCRIPT_DONE\n");
                 fprintf(stderr, "PTT_WAITING\n");
                 if (stderr_tty) {
