@@ -475,32 +475,7 @@ int main(int argc, char ** argv) {
     }
     if (use_vad) params.max_tokens = 0;
 
-    // Init audio — suppress SDL device listing during init
-    // PTT mode needs large buffer for long recordings; standard mode uses length_ms
-    int audio_buffer_ms = params.length_ms;
-    if (params.ptt_mode) {
-        audio_buffer_ms = std::max(audio_buffer_ms, 600000 + params.ptt_pre_roll_ms);
-    }
-    audio_async audio(audio_buffer_ms);
-    int saved_stderr = suppress_stderr();
-    bool audio_ok = audio.init(params.capture_id, WHISPER_SAMPLE_RATE);
-    restore_stderr(saved_stderr);
-    if (!audio_ok) {
-        fprintf(stderr, "%s: audio.init() failed!\n", __func__);
-        return 1;
-    }
-
-    audio.resume();
-
-    // Request P-core scheduling for the inference thread
-    #ifdef __APPLE__
-    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
-    #endif
-
-    // Set recording state for signal handler
-    g_is_recording.store(true);
-
-    // Whisper init with CoreML support
+    // Whisper init with CoreML support — configure before parallel init
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1){
         fprintf(stderr, "error: unknown language '%s'\n", params.language.c_str());
         whisper_print_usage(argc, argv, params);
@@ -509,16 +484,11 @@ int main(int argc, char ** argv) {
 
     struct whisper_context_params cparams = whisper_context_default_params();
 
-    // Configure CoreML if available and requested
     #ifdef WHISPER_COREML
     if (params.use_coreml && params.coreml_no_ane) {
         setenv("WHISPER_COREML_NO_ANE", "1", 1);
     }
-    if (params.use_coreml) {
-        cparams.use_gpu = params.use_gpu;  // Metal for decoder, CoreML for encoder
-    } else {
-        cparams.use_gpu = params.use_gpu;
-    }
+    cparams.use_gpu = params.use_gpu;
     #else
     cparams.use_gpu = params.use_gpu;
     if (params.use_coreml) {
@@ -534,22 +504,53 @@ int main(int argc, char ** argv) {
 
     auto t_init_start = std::chrono::high_resolution_clock::now();
 
+    // Parallel init: load model and init audio simultaneously.
+    // Model load is I/O-bound (1.5GB mmap), audio init is device-bound —
+    // running them in parallel saves 0.3-0.5s on cold start.
+    int audio_buffer_ms = params.length_ms;
+    if (params.ptt_mode) {
+        audio_buffer_ms = std::max(audio_buffer_ms, 600000 + params.ptt_pre_roll_ms);
+    }
+
+    std::atomic<bool> audio_ok{false};
+    audio_async audio(audio_buffer_ms);
+    auto audio_future = std::async(std::launch::async, [&]() {
+        int saved = suppress_stderr();
+        audio_ok.store(audio.init(params.capture_id, WHISPER_SAMPLE_RATE));
+        restore_stderr(saved);
+    });
+
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
     if (ctx == nullptr) {
-        // Restore logging before printing error
         whisper_log_set(nullptr, nullptr);
         ggml_log_set(nullptr, nullptr);
         fprintf(stderr, "error: failed to initialize whisper context\n");
         return 2;
     }
 
+    // Wait for audio init to complete
+    audio_future.wait();
+    if (!audio_ok.load()) {
+        fprintf(stderr, "%s: audio.init() failed!\n", __func__);
+        whisper_free(ctx);
+        return 1;
+    }
+
+    audio.resume();
+
     if (stderr_is_tty) {
         auto t_model_loaded = std::chrono::high_resolution_clock::now();
         auto model_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_model_loaded - t_init_start).count();
-        if (model_ms > 1000) {
-            fprintf(stderr, "[Model loaded in %.1fs]\n", model_ms / 1000.0);
-        }
+        fprintf(stderr, "[Ready in %.1fs]\n", model_ms / 1000.0);
     }
+
+    // Request P-core scheduling for the inference thread
+    #ifdef __APPLE__
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+    #endif
+
+    // Set recording state for signal handler
+    g_is_recording.store(true);
 
     // CoreML warm-up: first inference triggers ANE compilation
     // For large models this can take 30s+ on first run (ANE caches for subsequent runs)
@@ -805,12 +806,14 @@ int main(int argc, char ** argv) {
                     break;
                 }
 
-                // Launch new async preview every 3s, starting after 2s of recording
+                // Launch new async preview every 2s, starting after 1.5s of recording.
+                // Uses last 15s of audio (not all) for bounded inference time.
                 int since_preview = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - t_last_preview).count());
-                if (!preview_running && elapsed_ms >= 2000 && since_preview >= 3000) {
+                if (!preview_running && elapsed_ms >= 1500 && since_preview >= 2000) {
                     t_last_preview = now;
 
-                    int preview_ms = std::min(elapsed_ms + params.ptt_pre_roll_ms, 28000);
+                    // Cap preview window at 15s — keeps inference fast (~1-2s)
+                    int preview_ms = std::min(elapsed_ms + params.ptt_pre_roll_ms, 15000);
                     std::vector<float> preview_audio;
                     audio.get(preview_ms, preview_audio);
 
@@ -921,45 +924,41 @@ int main(int argc, char ** argv) {
             if (stderr_tty) fprintf(stderr, "\r[Transcribing %.1fs...]        ", actual_duration_s);
 
             // PTT-optimized inference: beam search for quality, no temperature
-            // fallback (causes issues at chunk boundaries). Short chunks (15s)
-            // keep whisper reliable — longer audio causes attention dropout.
+            // fallback (causes issues at chunk boundaries).
             whisper_params ptt_params = params;
             if (ptt_params.beam_size <= 0) ptt_params.beam_size = 5;
             ptt_params.no_fallback = true;
-            ptt_params.no_context = true;
             ptt_params.max_tokens = 256;
             // PTT guarantees speech (user holds a button), so relax no-speech
             // detection to prevent whisper from skipping onset segments.
             ptt_params.no_speech_thold = 0.9f;
 
-            // Process audio in ≤15-second chunks. The first chunk already has
-            // real ambient audio as lead-in (from extended audio.get above).
-            // Subsequent chunks use overlap from the previous chunk's tail,
-            // matching whisper.cpp's keep_ms streaming pattern.
+            // Process audio in ≤28-second chunks (whisper's 30s window minus margin).
+            // Larger chunks = fewer boundary artifacts and better context.
+            // Cross-chunk context is carried via prompt tokens from previous chunk
+            // output, giving whisper decoder continuity across boundaries.
             std::vector<BilingualSegment> bilingual_results;
-            const int chunk_samples = WHISPER_SAMPLE_RATE * 15;
-            const int overlap_samples = WHISPER_SAMPLE_RATE / 5;  // 200ms overlap between chunks
+            const int chunk_samples = WHISPER_SAMPLE_RATE * 28;
+            const int overlap_samples = WHISPER_SAMPLE_RATE / 2;  // 500ms overlap for continuity
             bool inference_failed = false;
+            std::vector<whisper_token> ptt_prompt_tokens;
 
             for (size_t offset = 0; offset < pcmf32_ptt.size(); offset += chunk_samples) {
                 size_t remaining = pcmf32_ptt.size() - offset;
                 size_t chunk_size = std::min(remaining, static_cast<size_t>(chunk_samples));
 
-                // Avoid a tiny trailing chunk (< 2s) — merge with previous
+                // Avoid a tiny trailing chunk (< 3s) — merge with previous
                 if (remaining > static_cast<size_t>(chunk_samples) &&
-                    remaining < static_cast<size_t>(chunk_samples + WHISPER_SAMPLE_RATE * 2)) {
+                    remaining < static_cast<size_t>(chunk_samples + WHISPER_SAMPLE_RATE * 3)) {
                     chunk_size = remaining;
                 }
 
                 std::vector<float> chunk;
                 if (offset == 0) {
-                    // First chunk: real audio already includes lead-in from
-                    // the extended audio.get() — no synthetic silence needed.
                     chunk.assign(pcmf32_ptt.begin(),
                                  pcmf32_ptt.begin() + chunk_size);
                 } else {
-                    // Subsequent chunks: prepend overlap from previous chunk's
-                    // tail for acoustic continuity (real audio, not zeros).
+                    // Subsequent chunks: 500ms overlap from previous chunk's tail
                     size_t overlap = std::min(static_cast<size_t>(overlap_samples), offset);
                     chunk.resize(overlap + chunk_size);
                     std::copy(pcmf32_ptt.begin() + offset - overlap,
@@ -973,12 +972,27 @@ int main(int argc, char ** argv) {
                             (pcmf32_ptt.size() + chunk_samples - 1) / chunk_samples);
                 }
 
+                // Carry context from previous chunk via prompt tokens
+                // (first chunk uses initial_prompt, subsequent use decoder output)
+                ptt_params.no_context = (offset == 0);
+
                 std::vector<BilingualSegment> chunk_results;
                 if (process_audio_segment(ctx, ctx_translate, ptt_params, chunk,
-                                          chunk_results, prompt_tokens) != 0) {
+                                          chunk_results, ptt_prompt_tokens) != 0) {
                     fprintf(stderr, "\nfailed to process audio chunk\n");
                     inference_failed = true;
                     break;
+                }
+
+                // Extract prompt tokens from this chunk for next chunk's context
+                int n_segments = whisper_full_n_segments(ctx);
+                if (n_segments > 0) {
+                    int last_seg = n_segments - 1;
+                    int n_tokens = whisper_full_n_tokens(ctx, last_seg);
+                    ptt_prompt_tokens.clear();
+                    for (int t = 0; t < n_tokens; ++t) {
+                        ptt_prompt_tokens.push_back(whisper_full_get_token_id(ctx, last_seg, t));
+                    }
                 }
 
                 bilingual_results.insert(bilingual_results.end(),
